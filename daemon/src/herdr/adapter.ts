@@ -75,7 +75,6 @@ export class HerdrAdapter {
       const subscriptions = [
         { type: "pane.created" },
         { type: "pane.closed" },
-        { type: "pane.updated" },
         ...paneIds.map((pane_id) => ({ type: "pane.agent_status_changed", pane_id })),
       ];
 
@@ -83,7 +82,6 @@ export class HerdrAdapter {
         if (
           event === "pane_created" ||
           event === "pane_closed" ||
-          event === "pane_updated" ||
           event === "pane_agent_status_changed"
         ) {
           void resubscribe().then(async () => callback(await this.listSessions()));

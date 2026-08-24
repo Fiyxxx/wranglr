@@ -163,7 +163,6 @@ describe("HerdrAdapter", () => {
     const firstSub = serverState.subscriptionCalls[0].subscriptions as Array<{ type: string; pane_id?: string }>;
     expect(firstSub).toContainEqual({ type: "pane.created" });
     expect(firstSub).toContainEqual({ type: "pane.closed" });
-    expect(firstSub).toContainEqual({ type: "pane.updated" });
     expect(firstSub).toContainEqual({ type: "pane.agent_status_changed", pane_id: "w1:p1" });
 
     // Now enable the snapshot expansion (after the initial call)
@@ -188,7 +187,6 @@ describe("HerdrAdapter", () => {
     const secondSub = serverState.subscriptionCalls[1].subscriptions as Array<{ type: string; pane_id?: string }>;
     expect(secondSub).toContainEqual({ type: "pane.created" });
     expect(secondSub).toContainEqual({ type: "pane.closed" });
-    expect(secondSub).toContainEqual({ type: "pane.updated" });
     expect(secondSub).toContainEqual({ type: "pane.agent_status_changed", pane_id: "w1:p1" });
     expect(secondSub).toContainEqual({ type: "pane.agent_status_changed", pane_id: "w1:p2" });
 
@@ -218,6 +216,41 @@ describe("HerdrAdapter", () => {
     // The callback should fire for each event, but NO new subscriptions should be opened
     // (because the pane set hasn't changed, only the same pane_created event fired multiple times)
     expect(serverState.subscriptionCalls.length).toBe(subscriptionCountAfterInit);
+
+    unsubscribe();
+  });
+
+  test("onSessionChange ignores pane_updated events (no feedback loop)", async () => {
+    const client = new HerdrSocketClient(SOCK_PATH);
+    const adapter = new HerdrAdapter(client);
+
+    const calls: unknown[] = [];
+    const unsubscribe = await adapter.onSessionChange((sessions) => calls.push(sessions));
+
+    // Verify initial callback
+    expect(calls.length).toBe(1);
+
+    // Verify first (and only) subscription was made
+    const subscriptionCountAfterInit = serverState.subscriptionCalls.length;
+    expect(subscriptionCountAfterInit).toBe(1);
+
+    // Emit multiple pane_updated events (output/terminal changes)
+    // These should NOT trigger callback fires or new subscriptions
+    await client.request("test.emit_event", { event: "pane_updated" });
+    await new Promise((r) => setTimeout(r, 30));
+    await client.request("test.emit_event", { event: "pane_updated" });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // No new callbacks should have fired, and no new subscriptions should have been opened
+    expect(calls.length).toBe(1); // still just the initial call
+    expect(serverState.subscriptionCalls.length).toBe(subscriptionCountAfterInit); // still just one
+
+    // Verify that pane.updated is NOT in the subscriptions (should only have pane.created/closed and agent_status_changed)
+    const sub = serverState.subscriptionCalls[0].subscriptions as Array<{ type: string; pane_id?: string }>;
+    expect(sub).toContainEqual({ type: "pane.created" });
+    expect(sub).toContainEqual({ type: "pane.closed" });
+    expect(sub).not.toContainEqual({ type: "pane.updated" });
+    expect(sub).toContainEqual({ type: "pane.agent_status_changed", pane_id: "w1:p1" });
 
     unsubscribe();
   });
