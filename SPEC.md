@@ -63,6 +63,8 @@ Live change notification is a subscription over the same socket — `subscriptio
 
 Build the adapter as an isolated module against this socket protocol (raw socket client, not CLI subprocess spawning) so it stays swappable if the protocol version changes — schema is versioned (`protocol`/`schema_version` fields), so pin and check on connect.
 
+**Correction (found during daemon integration testing, 2026-08-24):** each connection is one-shot — Herdr closes it right after the first response, unless that first request was `events.subscribe`, in which case it stays open to stream events. A plain query (snapshot, pane read, send-keys, …) needs its own fresh connection per call; only the subscription needs a long-lived one. Do not reuse a connection across multiple plain requests.
+
 The daemon correlates the two: a Claude Code hook event carries a working directory; the Herdr adapter maps working directories to active panes/worktrees; the event bus joins them so the phone sees "this diff belongs to the `feature-x` worktree, currently active in Herdr pane 3."
 
 ## 6. Technology choices
