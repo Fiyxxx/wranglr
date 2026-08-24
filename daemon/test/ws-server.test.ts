@@ -98,4 +98,33 @@ describe("ws-server", () => {
     expect(received).toEqual([{ type: "approval_response", id: "req-1", decision: "approve" }]);
     ws.close();
   });
+
+  test("sends the full snapshot again on reconnect after the first connection closes", async () => {
+    const bus = new EventBus<ServerMessage>();
+    server = startWsServer({
+      token: "correct-token",
+      hostname: "127.0.0.1",
+      port: 0,
+      bus,
+      onClientMessage: () => {},
+      getSnapshot: snapshotMessages,
+    });
+
+    // First connection
+    const ws1 = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
+    const firstMessage = await new Promise<string>((resolve) => {
+      ws1.addEventListener("message", (e) => resolve(e.data as string));
+    });
+    expect(JSON.parse(firstMessage)).toEqual(snapshotMessages());
+    ws1.close();
+    await new Promise((r) => setTimeout(r, 20)); // ensure close is processed
+
+    // Second connection to same server
+    const ws2 = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
+    const secondMessage = await new Promise<string>((resolve) => {
+      ws2.addEventListener("message", (e) => resolve(e.data as string));
+    });
+    expect(JSON.parse(secondMessage)).toEqual(snapshotMessages());
+    ws2.close();
+  });
 });
