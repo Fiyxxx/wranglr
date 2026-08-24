@@ -5,37 +5,50 @@ import { HerdrSocketClient } from "../../src/herdr/socket-client";
 const SOCK_PATH = "/tmp/wranglr-test-herdr.sock";
 
 let fakeServer: ReturnType<typeof Bun.listen<undefined>>;
-let serverSocket: any;
 
-function startFakeHerdrServer(customHandler?: (socket: any, chunk: Buffer) => void) {
+function startFakeHerdrServer() {
   return Bun.listen({
     unix: SOCK_PATH,
     socket: {
-      open(socket) {
-        serverSocket = socket;
-      },
       data(socket, chunk) {
-        if (customHandler) {
-          customHandler(socket, chunk);
-          return;
-        }
         const lines = chunk.toString("utf8").split("\n").filter(Boolean);
         for (const line of lines) {
           const req = JSON.parse(line);
-          if (req.method === "ping") {
+
+          if (req.method === "events.subscribe") {
+            // Keep connection open for subscription
+            socket.write(
+              JSON.stringify({ id: req.id, result: { type: "subscription_started" } }) + "\n",
+            );
+            // Push an event after a short delay
+            setTimeout(() => {
+              socket.write(
+                JSON.stringify({
+                  event: "pane_created",
+                  data: { type: "pane_created", pane: { pane_id: "w1:p1" } },
+                }) + "\n",
+              );
+            }, 20);
+          } else if (req.method === "ping") {
+            // Send response and close connection
             socket.write(JSON.stringify({ id: req.id, result: { type: "pong" } }) + "\n");
-          } else if (req.method === "events.subscribe") {
-            socket.write(JSON.stringify({ id: req.id, result: { type: "subscription_started" } }) + "\n");
+            socket.end();
+          } else if (req.method === "boom") {
+            // Send error response and close connection
+            socket.write(
+              JSON.stringify({ id: req.id, error: { code: "invalid_request", message: "boom" } }) +
+                "\n",
+            );
+            socket.end();
+          } else if (req.method === "session.snapshot") {
+            // Send response and close connection
             socket.write(
               JSON.stringify({
-                event: "pane_created",
-                data: { type: "pane_created", pane: { pane_id: "w1:p1" } },
+                id: req.id,
+                result: { sessions: { "session-1": { id: "session-1", name: "Main" } } },
               }) + "\n",
             );
-          } else if (req.method === "boom") {
-            socket.write(
-              JSON.stringify({ id: req.id, error: { code: "invalid_request", message: "boom" } }) + "\n",
-            );
+            socket.end();
           }
         }
       },
@@ -58,143 +71,142 @@ afterEach(() => {
 });
 
 describe("HerdrSocketClient", () => {
-  test("sends a request and resolves with the matching result by id", async () => {
+  test("request() opens connection, sends request, reads response, closes cleanly", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
     const result = await client.request("ping", {});
     expect(result).toEqual({ type: "pong" });
-    client.close();
   });
 
-  test("rejects the request promise on an error response", async () => {
+  test("two sequential request() calls both succeed with their own connections", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
+
+    // First request
+    const result1 = await client.request("ping", {});
+    expect(result1).toEqual({ type: "pong" });
+
+    // Second request on same client instance (new connection internally)
+    const result2 = await client.request("session.snapshot", {});
+    expect(result2).toEqual({ sessions: { "session-1": { id: "session-1", name: "Main" } } });
+  });
+
+  test("request() with error response rejects the promise", async () => {
+    const client = new HerdrSocketClient(SOCK_PATH);
     await expect(client.request("boom", {})).rejects.toThrow("boom");
-    client.close();
   });
 
-  test("dispatches pushed events (no id) to onEvent listeners, not to pending requests", async () => {
+  test("partial JSON line buffered across multiple data() callbacks resolves correctly", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
-    const seen: Array<{ event: string; data: unknown }> = [];
-    const unsubscribe = client.onEvent((event, data) => seen.push({ event, data }));
 
-    const subResult = await client.request("events.subscribe", {
-      subscriptions: [{ type: "pane.created" }],
+    const fullResponse = JSON.stringify({ id: "1", result: { type: "pong" } }) + "\n";
+    const splitPoint = Math.floor(fullResponse.length / 2);
+
+    // Temporarily replace server with one that sends split response
+    fakeServer.stop(true);
+    fakeServer = Bun.listen({
+      unix: SOCK_PATH,
+      socket: {
+        data(socket, chunk) {
+          const lines = chunk.toString("utf8").split("\n").filter(Boolean);
+          for (const line of lines) {
+            const req = JSON.parse(line);
+            if (req.method === "ping") {
+              const part1 = fullResponse.slice(0, splitPoint);
+              const part2 = fullResponse.slice(splitPoint);
+              socket.write(part1);
+              setTimeout(() => {
+                socket.write(part2);
+                socket.end();
+              }, 5);
+            }
+          }
+        },
+      },
     });
-    expect(subResult).toEqual({ type: "subscription_started" });
 
-    await new Promise((r) => setTimeout(r, 50));
-    expect(seen).toEqual([
+    const result = await client.request("ping", {});
+    expect(result).toEqual({ type: "pong" });
+  });
+
+  test("subscribe() gets ack and receives pushed events via callback", async () => {
+    const client = new HerdrSocketClient(SOCK_PATH);
+    const events: Array<{ event: string; data: unknown }> = [];
+
+    const unsubscribe = await client.subscribe(
+      [{ type: "pane.created" }],
+      (event, data) => events.push({ event, data }),
+    );
+
+    // Wait for event to arrive
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(events).toEqual([
       { event: "pane_created", data: { type: "pane_created", pane: { pane_id: "w1:p1" } } },
     ]);
 
     unsubscribe();
-    client.close();
   });
 
-  test("handles JSON line split across multiple data() invocations", async () => {
-    const fullResponse = JSON.stringify({ id: "1", result: { type: "pong" } }) + "\n";
-    const splitPoint = Math.floor(fullResponse.length / 2);
-    const part1 = fullResponse.slice(0, splitPoint);
-    const part2 = fullResponse.slice(splitPoint);
-
+  test("subscribe() with error response rejects the returned promise", async () => {
     fakeServer.stop(true);
-    fakeServer = startFakeHerdrServer((socket) => {
-      setTimeout(() => {
-        socket.write(part1);
-        setTimeout(() => {
-          socket.write(part2);
-        }, 10);
-      }, 10);
+    fakeServer = Bun.listen({
+      unix: SOCK_PATH,
+      socket: {
+        data(socket, chunk) {
+          const lines = chunk.toString("utf8").split("\n").filter(Boolean);
+          for (const line of lines) {
+            const req = JSON.parse(line);
+            if (req.method === "events.subscribe") {
+              socket.write(
+                JSON.stringify({
+                  id: req.id,
+                  error: { code: "invalid_subscriptions", message: "invalid subscription" },
+                }) + "\n",
+              );
+              socket.end();
+            }
+          }
+        },
+      },
     });
 
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
-    const result = await client.request("ping", {});
-    expect(result).toEqual({ type: "pong" });
-    client.close();
+    await expect(
+      client.subscribe([{ type: "pane.created" }], () => {}),
+    ).rejects.toThrow("invalid subscription");
   });
 
-  test("multiple concurrent requests resolve with their own matching results", async () => {
-    fakeServer.stop(true);
-    fakeServer = startFakeHerdrServer((socket, chunk) => {
-      const lines = chunk.toString("utf8").split("\n").filter(Boolean);
-      for (const line of lines) {
-        const req = JSON.parse(line);
-        if (req.method === "req_a") {
-          // Reply to req_b first, then req_a (out of order)
-          setTimeout(() => {
-            socket.write(JSON.stringify({ id: "2", result: { data: "response_b" } }) + "\n");
-          }, 5);
-          setTimeout(() => {
-            socket.write(JSON.stringify({ id: req.id, result: { data: "response_a" } }) + "\n");
-          }, 20);
-        } else if (req.method === "req_b") {
-          // Don't respond yet; will respond via req_a handler
-        }
-      }
-    });
-
+  test("subscribe() unsubscribe() closes connection and second call is no-op", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
+    const events: Array<{ event: string; data: unknown }> = [];
 
-    const promiseA = client.request("req_a", {});
-    const promiseB = client.request("req_b", {});
+    const unsubscribe = await client.subscribe(
+      [{ type: "pane.created" }],
+      (event, data) => events.push({ event, data }),
+    );
 
-    const resultA = await promiseA;
-    const resultB = await promiseB;
+    // Wait a bit then unsubscribe
+    await new Promise((r) => setTimeout(r, 30));
 
-    expect(resultA).toEqual({ data: "response_a" });
-    expect(resultB).toEqual({ data: "response_b" });
-    client.close();
+    const eventCountBefore = events.length;
+
+    // First unsubscribe should work
+    unsubscribe();
+
+    // Second unsubscribe should be no-op (not throw)
+    unsubscribe();
+
+    expect(eventCountBefore).toBeGreaterThanOrEqual(1);
   });
 
-  test("rejects pending requests when socket closes", async () => {
-    fakeServer.stop(true);
-    fakeServer = startFakeHerdrServer((socket, chunk) => {
-      const lines = chunk.toString("utf8").split("\n").filter(Boolean);
-      for (const line of lines) {
-        const req = JSON.parse(line);
-        if (req.method === "delay") {
-          // Don't respond; let socket close instead
-          setTimeout(() => {
-            socket.end();
-          }, 20);
-        }
-      }
-    });
-
+  test("multiple concurrent request() calls each get their own connection and response", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
 
-    const pendingRequest = client.request("delay", {});
-    await expect(pendingRequest).rejects.toThrow("herdr socket closed");
-  });
+    const prom1 = client.request("ping", {});
+    const prom2 = client.request("session.snapshot", {});
 
-  test("request() called immediately after connect() (without await) resolves once connected", async () => {
-    const client = new HerdrSocketClient(SOCK_PATH);
-    const connectPromise = client.connect();
+    const [result1, result2] = await Promise.all([prom1, prom2]);
 
-    // Call request() before connect() resolves
-    const requestPromise = client.request("ping", {});
-
-    await connectPromise;
-    const result = await requestPromise;
-    expect(result).toEqual({ type: "pong" });
-    client.close();
-  });
-
-  test("close() called immediately after connect() (without await) succeeds once connected", async () => {
-    const client = new HerdrSocketClient(SOCK_PATH);
-    const connectPromise = client.connect();
-
-    // Call close() before connect() resolves - should not throw
-    const closePromise = Promise.resolve(client.close());
-
-    await connectPromise;
-    await closePromise;
-    // If we get here without error, test passes
-    expect(true).toBe(true);
+    expect(result1).toEqual({ type: "pong" });
+    expect(result2).toEqual({ sessions: { "session-1": { id: "session-1", name: "Main" } } });
   });
 });
