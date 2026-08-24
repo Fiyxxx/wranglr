@@ -40,7 +40,6 @@ function sessionsToWorktreeStatus(sessions: HerdrSession[]): ServerMessage {
 }
 
 const herdrClient = new HerdrSocketClient(HERDR_SOCKET_PATH);
-await herdrClient.connect();
 const herdrAdapter = new HerdrAdapter(herdrClient);
 await herdrAdapter.onSessionChange((sessions) => {
   latestSessions = sessions;
