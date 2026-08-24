@@ -31,7 +31,6 @@ function toSession(a: SnapshotAgent): HerdrSession {
 
 export class HerdrAdapter {
   private client: HerdrSocketClient;
-  private subscribedPaneIds = new Set<string>();
 
   constructor(client: HerdrSocketClient) {
     this.client = client;
@@ -59,42 +58,45 @@ export class HerdrAdapter {
   }
 
   async onSessionChange(callback: (sessions: HerdrSession[]) => void): Promise<() => void> {
-    const emit = async () => callback(await this.listSessions());
+    let currentUnsubscribe: (() => void) | null = null;
+    let lastPaneIdSet = "";
 
-    const unsubscribeEvents = this.client.onEvent((event) => {
-      if (
-        event === "pane_created" ||
-        event === "pane_closed" ||
-        event === "pane_updated" ||
-        event === "pane_agent_status_changed"
-      ) {
-        void this.resubscribeToKnownPanes().then(emit);
+    const resubscribe = async (): Promise<void> => {
+      const sessions = await this.listSessions();
+      const paneIds = sessions.map((s) => s.paneId).sort();
+      const paneIdSetKey = paneIds.join(",");
+
+      // Avoid redundant subscription if pane set hasn't changed (prevents infinite loop from backfill replay)
+      if (paneIdSetKey === lastPaneIdSet && currentUnsubscribe) {
+        return;
       }
-    });
+      lastPaneIdSet = paneIdSetKey;
 
-    await this.resubscribeToKnownPanes();
-    await emit();
-
-    return () => unsubscribeEvents();
-  }
-
-  private async resubscribeToKnownPanes(): Promise<void> {
-    const sessions = await this.listSessions();
-    const newPaneIds = sessions.map((s) => s.paneId).filter((id) => !this.subscribedPaneIds.has(id));
-    if (newPaneIds.length === 0 && this.subscribedPaneIds.size > 0) return;
-
-    for (const id of newPaneIds) this.subscribedPaneIds.add(id);
-
-    await this.client.request("events.subscribe", {
-      subscriptions: [
+      const subscriptions = [
         { type: "pane.created" },
         { type: "pane.closed" },
         { type: "pane.updated" },
-        ...[...this.subscribedPaneIds].map((pane_id) => ({
-          type: "pane.agent_status_changed",
-          pane_id,
-        })),
-      ],
-    });
+        ...paneIds.map((pane_id) => ({ type: "pane.agent_status_changed", pane_id })),
+      ];
+
+      const newUnsubscribe = await this.client.subscribe(subscriptions, (event) => {
+        if (
+          event === "pane_created" ||
+          event === "pane_closed" ||
+          event === "pane_updated" ||
+          event === "pane_agent_status_changed"
+        ) {
+          void resubscribe().then(async () => callback(await this.listSessions()));
+        }
+      });
+
+      currentUnsubscribe?.();
+      currentUnsubscribe = newUnsubscribe;
+    };
+
+    await resubscribe();
+    callback(await this.listSessions());
+
+    return () => currentUnsubscribe?.();
   }
 }

@@ -8,8 +8,8 @@ const SOCK_PATH = "/tmp/wranglr-test-herdr-adapter.sock";
 interface FakeServerState {
   snapshotCallCount: number;
   subscriptionCalls: Array<{ subscriptions: Array<{ type: string; pane_id?: string }> }>;
-  expandSnapshotAfter: number; // expand snapshot after this many calls
-  socket?: ReturnType<typeof Bun.connect> extends Promise<infer S> ? S : never;
+  expandSnapshotAfter: number;
+  subscribedSocket: ReturnType<typeof Bun.connect> extends Promise<infer S> ? S | null : never;
 }
 
 function startFakeHerdrServer(state: FakeServerState) {
@@ -17,7 +17,6 @@ function startFakeHerdrServer(state: FakeServerState) {
     unix: SOCK_PATH,
     socket: {
       data(socket, chunk) {
-        state.socket = socket;
         for (const line of chunk.toString("utf8").split("\n").filter(Boolean)) {
           const req = JSON.parse(line);
           const reply = (result: Record<string, unknown>) =>
@@ -56,17 +55,26 @@ function startFakeHerdrServer(state: FakeServerState) {
                     },
                   ];
             reply({ snapshot: { agents } });
+            // One-shot: close after response
+            socket.end();
           } else if (req.method === "pane.read") {
             reply({ read: { text: "hello from pane" } });
+            socket.end();
           } else if (req.method === "pane.send_keys") {
             reply({ type: "ok" });
+            socket.end();
           } else if (req.method === "events.subscribe") {
             state.subscriptionCalls.push(req.params);
             reply({ type: "subscription_started" });
+            // Keep connection open to push events (don't call socket.end())
+            state.subscribedSocket = socket;
           } else if (req.method === "test.emit_event") {
-            // Special test helper: emit an event to the client
-            socket.write(JSON.stringify({ event: req.params.event, data: {} }) + "\n");
+            // Special test helper: emit an event on the subscription connection
+            if (state.subscribedSocket) {
+              state.subscribedSocket.write(JSON.stringify({ event: req.params.event, data: {} }) + "\n");
+            }
             reply({ type: "ok" });
+            socket.end();
           }
         }
       },
@@ -81,11 +89,14 @@ beforeEach(() => {
   try {
     unlinkSync(SOCK_PATH);
   } catch {}
-  serverState = { snapshotCallCount: 0, subscriptionCalls: [], expandSnapshotAfter: Infinity };
+  serverState = { snapshotCallCount: 0, subscriptionCalls: [], expandSnapshotAfter: Infinity, subscribedSocket: null };
   fakeServer = startFakeHerdrServer(serverState);
 });
 
 afterEach(() => {
+  if (serverState.subscribedSocket) {
+    serverState.subscribedSocket.end();
+  }
   fakeServer.stop(true);
   try {
     unlinkSync(SOCK_PATH);
@@ -95,7 +106,6 @@ afterEach(() => {
 describe("HerdrAdapter", () => {
   test("listSessions maps session.snapshot agents into HerdrSession[]", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
     const adapter = new HerdrAdapter(client);
 
     const sessions = await adapter.listSessions();
@@ -109,30 +119,24 @@ describe("HerdrAdapter", () => {
         agentSessionId: "sess-1",
       },
     ]);
-    client.close();
   });
 
   test("getPaneContent returns the pane.read text", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
     const adapter = new HerdrAdapter(client);
 
     expect(await adapter.getPaneContent("w1:p1")).toBe("hello from pane");
-    client.close();
   });
 
   test("sendKeys resolves without throwing on an ok response", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
     const adapter = new HerdrAdapter(client);
 
     await expect(adapter.sendKeys("w1:p1", ["Enter"])).resolves.toBeUndefined();
-    client.close();
   });
 
   test("onSessionChange fires the callback with a fresh session list on a pushed event", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
     const adapter = new HerdrAdapter(client);
 
     const calls: unknown[] = [];
@@ -140,12 +144,10 @@ describe("HerdrAdapter", () => {
 
     expect(calls.length).toBeGreaterThanOrEqual(1); // initial call after subscribe
     unsubscribe();
-    client.close();
   });
 
   test("onSessionChange re-subscribes with new pane agent_status_changed when pane appears", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
-    await client.connect();
     const adapter = new HerdrAdapter(client);
 
     const calls: unknown[] = [];
@@ -164,15 +166,13 @@ describe("HerdrAdapter", () => {
     expect(firstSub).toContainEqual({ type: "pane.updated" });
     expect(firstSub).toContainEqual({ type: "pane.agent_status_changed", pane_id: "w1:p1" });
 
-    // Now enable the snapshot expansion (after the initial 2 calls: resubscribeToKnownPanes and emit)
+    // Now enable the snapshot expansion (after the initial call)
     serverState.expandSnapshotAfter = serverState.snapshotCallCount;
 
     // Emit a pane_created event to trigger re-subscription
-    // (the fake server's session.snapshot will now return 2 panes on subsequent calls)
     await client.request("test.emit_event", { event: "pane_created" });
 
     // Wait for callback to fire with updated list
-    // Using a small async delay to let the event propagate
     await new Promise((r) => setTimeout(r, 50));
 
     // Verify second callback fired with two panes
@@ -193,6 +193,32 @@ describe("HerdrAdapter", () => {
     expect(secondSub).toContainEqual({ type: "pane.agent_status_changed", pane_id: "w1:p2" });
 
     unsubscribe();
-    client.close();
+  });
+
+  test("onSessionChange prevents infinite loop from backfill replay of same pane set", async () => {
+    const client = new HerdrSocketClient(SOCK_PATH);
+    const adapter = new HerdrAdapter(client);
+
+    const calls: unknown[] = [];
+    const unsubscribe = await adapter.onSessionChange((sessions) => calls.push(sessions));
+
+    // Verify initial subscription
+    expect(serverState.subscriptionCalls.length).toBe(1);
+    const subscriptionCountAfterInit = serverState.subscriptionCalls.length;
+
+    // Emit multiple pane_created events for the SAME pane (simulating backfill replay)
+    // Each subscription to pane.created generates a synthetic event for each existing pane
+    await client.request("test.emit_event", { event: "pane_created" });
+    await new Promise((r) => setTimeout(r, 30));
+    await client.request("test.emit_event", { event: "pane_created" });
+    await new Promise((r) => setTimeout(r, 30));
+    await client.request("test.emit_event", { event: "pane_created" });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // The callback should fire for each event, but NO new subscriptions should be opened
+    // (because the pane set hasn't changed, only the same pane_created event fired multiple times)
+    expect(serverState.subscriptionCalls.length).toBe(subscriptionCountAfterInit);
+
+    unsubscribe();
   });
 });
