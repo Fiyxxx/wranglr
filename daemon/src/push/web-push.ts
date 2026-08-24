@@ -27,6 +27,7 @@ export class PushManager {
   private send: SendImpl;
 
   constructor(vapidKeys: VapidKeys, sendImpl?: SendImpl) {
+    // Only set VAPID details when using real sendNotification; tests inject mocks with fake keys that would fail webpush's validation.
     if (!sendImpl) {
       webpush.setVapidDetails("mailto:tech@ecovolt.ai", vapidKeys.publicKey, vapidKeys.privateKey);
     }
