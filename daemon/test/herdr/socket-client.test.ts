@@ -209,4 +209,28 @@ describe("HerdrSocketClient", () => {
     expect(result1).toEqual({ type: "pong" });
     expect(result2).toEqual({ sessions: { "session-1": { id: "session-1", name: "Main" } } });
   });
+
+  test("subscribe() rejects (not hangs) if socket closes before ack arrives", async () => {
+    fakeServer.stop(true);
+    fakeServer = Bun.listen({
+      unix: SOCK_PATH,
+      socket: {
+        data(socket, chunk) {
+          const lines = chunk.toString("utf8").split("\n").filter(Boolean);
+          for (const line of lines) {
+            const req = JSON.parse(line);
+            if (req.method === "events.subscribe") {
+              // Close connection immediately without sending ack
+              socket.end();
+            }
+          }
+        },
+      },
+    });
+
+    const client = new HerdrSocketClient(SOCK_PATH);
+    await expect(
+      client.subscribe([{ type: "pane.created" }], () => {}),
+    ).rejects.toThrow("herdr socket closed before subscription started");
+  });
 });

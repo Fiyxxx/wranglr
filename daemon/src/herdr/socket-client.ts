@@ -74,8 +74,9 @@ export class HerdrSocketClient {
   ): Promise<() => void> {
     const id = String(this.nextId++);
     let buffer = "";
-    let connected = false;
-    let subscriptionSocket: any;
+    let settled = false;
+    type SocketType = ReturnType<typeof Bun.connect> extends Promise<infer S> ? S : never;
+    let subscriptionSocket: SocketType | null = null;
 
     return new Promise(async (resolve, reject) => {
       try {
@@ -100,11 +101,12 @@ export class HerdrSocketClient {
                 // Check if this is the ack response
                 if ("id" in msg && msg.id === id) {
                   if ("error" in msg) {
+                    settled = true;
                     _socket.end();
                     reject(new Error(msg.error.message));
                     return;
                   }
-                  connected = true;
+                  settled = true;
                   resolve(() => {
                     if (subscriptionSocket) {
                       subscriptionSocket.end();
@@ -118,18 +120,26 @@ export class HerdrSocketClient {
               }
             },
             error: (_socket, error) => {
-              if (!connected) {
+              if (!settled) {
+                settled = true;
                 subscriptionSocket = null;
                 reject(error);
               }
             },
             close: () => {
+              if (!settled) {
+                settled = true;
+                reject(new Error("herdr socket closed before subscription started"));
+              }
               subscriptionSocket = null;
             },
           },
         });
       } catch (err) {
-        reject(err);
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
       }
     });
   }
