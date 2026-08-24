@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@wranglr/protocol": "workspace:*",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "zod": "^4.4.3"
   }
 }
