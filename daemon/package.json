@@ -1,5 +1,10 @@
 {
   "name": "wranglr-daemon",
   "version": "0.1.0",
-  "type": "module"
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@wranglr/protocol": "workspace:*",
+    "web-push": "^3.6.7"
+  }
 }
