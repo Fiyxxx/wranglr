@@ -1,0 +1,5 @@
+{
+  "name": "wranglr",
+  "private": true,
+  "workspaces": ["daemon", "packages/*"]
+}
