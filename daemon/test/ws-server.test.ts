@@ -11,7 +11,10 @@ afterEach(() => {
 });
 
 function snapshotMessages(): ServerMessage[] {
-  return [{ type: "worktree_status", worktrees: [] }];
+  return [
+    { type: "worktree_status", worktrees: [] },
+    { type: "worktree_status", worktrees: ["wt1"] },
+  ];
 }
 
 describe("ws-server", () => {
@@ -45,10 +48,17 @@ describe("ws-server", () => {
     });
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
-    const firstMessage = await new Promise<string>((resolve) => {
-      ws.addEventListener("message", (e) => resolve(e.data as string));
+    const snapshot = snapshotMessages();
+    const messages: ServerMessage[] = [];
+    await new Promise<void>((resolve) => {
+      let count = 0;
+      ws.addEventListener("message", (e) => {
+        messages.push(JSON.parse(e.data as string));
+        count++;
+        if (count === snapshot.length) resolve();
+      });
     });
-    expect(JSON.parse(firstMessage)).toEqual(snapshotMessages());
+    expect(messages).toEqual(snapshot);
     ws.close();
   });
 
@@ -65,7 +75,14 @@ describe("ws-server", () => {
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
     await new Promise((resolve) => ws.addEventListener("open", resolve));
-    await new Promise((resolve) => ws.addEventListener("message", resolve)); // consume snapshot
+    const snapshot = snapshotMessages();
+    let count = 0;
+    await new Promise<void>((resolve) => {
+      ws.addEventListener("message", () => {
+        count++;
+        if (count === snapshot.length) resolve();
+      });
+    }); // consume all snapshot messages
 
     const nextMessage = new Promise<string>((resolve) => {
       ws.addEventListener("message", (e) => resolve(e.data as string));
@@ -90,7 +107,14 @@ describe("ws-server", () => {
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
     await new Promise((resolve) => ws.addEventListener("open", resolve));
-    await new Promise((resolve) => ws.addEventListener("message", resolve)); // consume snapshot
+    const snapshot = snapshotMessages();
+    let count = 0;
+    await new Promise<void>((resolve) => {
+      ws.addEventListener("message", () => {
+        count++;
+        if (count === snapshot.length) resolve();
+      });
+    }); // consume all snapshot messages
 
     ws.send(JSON.stringify({ type: "approval_response", id: "req-1", decision: "approve" }));
     await new Promise((r) => setTimeout(r, 20));
@@ -112,19 +136,32 @@ describe("ws-server", () => {
 
     // First connection
     const ws1 = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
-    const firstMessage = await new Promise<string>((resolve) => {
-      ws1.addEventListener("message", (e) => resolve(e.data as string));
+    const snapshot = snapshotMessages();
+    const firstMessages: ServerMessage[] = [];
+    await new Promise<void>((resolve) => {
+      let count = 0;
+      ws1.addEventListener("message", (e) => {
+        firstMessages.push(JSON.parse(e.data as string));
+        count++;
+        if (count === snapshot.length) resolve();
+      });
     });
-    expect(JSON.parse(firstMessage)).toEqual(snapshotMessages());
+    expect(firstMessages).toEqual(snapshot);
     ws1.close();
     await new Promise((r) => setTimeout(r, 20)); // ensure close is processed
 
     // Second connection to same server
     const ws2 = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
-    const secondMessage = await new Promise<string>((resolve) => {
-      ws2.addEventListener("message", (e) => resolve(e.data as string));
+    const secondMessages: ServerMessage[] = [];
+    await new Promise<void>((resolve) => {
+      let count = 0;
+      ws2.addEventListener("message", (e) => {
+        secondMessages.push(JSON.parse(e.data as string));
+        count++;
+        if (count === snapshot.length) resolve();
+      });
     });
-    expect(JSON.parse(secondMessage)).toEqual(snapshotMessages());
+    expect(secondMessages).toEqual(snapshot);
     ws2.close();
   });
 });

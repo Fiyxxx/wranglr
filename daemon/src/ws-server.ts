@@ -28,7 +28,9 @@ export function startWsServer(options: WsServerOptions): { stop: () => void; por
     },
     websocket: {
       open(ws) {
-        ws.send(JSON.stringify(options.getSnapshot()));
+        for (const message of options.getSnapshot()) {
+          ws.send(JSON.stringify(message));
+        }
         const unsubscribe = options.bus.subscribe((message) => {
           ws.send(JSON.stringify(message));
         });
