@@ -31,15 +31,18 @@ export class HerdrSocketClient {
   }
 
   close(): void {
-    this.socket.end();
+    this.connected.then(() => this.socket.end()).catch(() => {});
   }
 
   request<T = unknown>(method: string, params: Record<string, unknown>): Promise<T> {
-    const id = String(this.nextId++);
-    return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.socket.write(JSON.stringify({ id, method, params }) + "\n");
-    });
+    return (async () => {
+      await this.connected;
+      const id = String(this.nextId++);
+      return new Promise<T>((resolve, reject) => {
+        this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+        this.socket.write(JSON.stringify({ id, method, params }) + "\n");
+      });
+    })();
   }
 
   onEvent(listener: EventListener): () => void {
