@@ -43,7 +43,9 @@ describe("hook-server", () => {
 
   test("invokes onPreToolUse for a PreToolUse payload", async () => {
     const bus = new EventBus<ServerMessage>();
+    const received: ServerMessage[] = [];
     const preToolCalls: unknown[] = [];
+    bus.subscribe((m) => received.push(m));
     server = startHookServer({
       port: 0,
       bus,
@@ -64,10 +66,22 @@ describe("hook-server", () => {
     expect(preToolCalls).toEqual([
       { worktreePath: "/repo/feature-x", tool: "Bash", input: { command: "ls" } },
     ]);
+    expect(received).toEqual([
+      {
+        type: "hook_event",
+        hook: "PreToolUse",
+        worktreePath: "/repo/feature-x",
+        tool: "Bash",
+        input: { command: "ls" },
+        output: null,
+      },
+    ]);
   });
 
   test("returns 400 for a malformed payload", async () => {
     const bus = new EventBus<ServerMessage>();
+    const received: ServerMessage[] = [];
+    bus.subscribe((m) => received.push(m));
     server = startHookServer({ port: 0, bus });
 
     const response = await fetch(`http://127.0.0.1:${server.port}/hook`, {
@@ -77,5 +91,6 @@ describe("hook-server", () => {
     });
 
     expect(response.status).toBe(400);
+    expect(received).toEqual([]);
   });
 });
