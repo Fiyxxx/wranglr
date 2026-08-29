@@ -62,12 +62,12 @@ export function reducer(state: WranglrState, action: WranglrAction): WranglrStat
   }
 }
 
-interface WranglrContextValue {
+export interface WranglrContextValue {
   state: WranglrState;
   send: (msg: ClientMessage) => void;
 }
 
-const WranglrContext = createContext<WranglrContextValue | null>(null);
+export const WranglrContext = createContext<WranglrContextValue | null>(null);
 
 export function WranglrProvider({ url, children }: { url: string; children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
