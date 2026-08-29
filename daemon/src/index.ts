@@ -10,6 +10,8 @@ import { ApprovalRegistry } from "./approvals/approval-registry";
 import { assessRisk } from "./approvals/risk";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import qrcode from "qrcode-terminal";
+import { buildPairingPayload } from "./pairing/pairing-payload";
 
 const TOKEN = process.env.WRANGLR_TOKEN;
 const TAILSCALE_HOSTNAME = process.env.WRANGLR_HOSTNAME ?? "127.0.0.1";
@@ -96,6 +98,10 @@ startWsServer({
   bus,
   onClientMessage,
   getSnapshot: () => [sessionsToWorktreeStatus(latestSessions)],
+  onPushSubscribe: (sub) => pushManager.addSubscription(sub),
+  vapidPublicKey: pushManager.vapidPublicKey,
 });
 
 console.log(`wranglr daemon listening: ws=${TAILSCALE_HOSTNAME}:${WS_PORT} hooks=127.0.0.1:${HOOK_PORT}`);
+console.log("Scan to pair the Wranglr PWA:");
+qrcode.generate(buildPairingPayload(TAILSCALE_HOSTNAME, WS_PORT, TOKEN), { small: true });

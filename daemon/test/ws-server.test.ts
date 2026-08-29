@@ -27,6 +27,8 @@ describe("ws-server", () => {
       bus,
       onClientMessage: () => {},
       getSnapshot: snapshotMessages,
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
     });
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}?token=wrong-token`);
@@ -45,6 +47,8 @@ describe("ws-server", () => {
       bus,
       onClientMessage: () => {},
       getSnapshot: snapshotMessages,
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
     });
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
@@ -71,6 +75,8 @@ describe("ws-server", () => {
       bus,
       onClientMessage: () => {},
       getSnapshot: snapshotMessages,
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
     });
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
@@ -103,6 +109,8 @@ describe("ws-server", () => {
       bus,
       onClientMessage: (msg) => received.push(msg),
       getSnapshot: snapshotMessages,
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
     });
 
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}?token=correct-token`);
@@ -132,6 +140,8 @@ describe("ws-server", () => {
       bus,
       onClientMessage: () => {},
       getSnapshot: snapshotMessages,
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
     });
 
     // First connection
@@ -163,5 +173,107 @@ describe("ws-server", () => {
     });
     expect(secondMessages).toEqual(snapshot);
     ws2.close();
+  });
+
+  test("POST /push-subscribe with a valid token calls onPushSubscribe and returns 204", async () => {
+    const bus = new EventBus<ServerMessage>();
+    const received: unknown[] = [];
+    server = startWsServer({
+      token: "tok",
+      hostname: "127.0.0.1",
+      port: 0,
+      bus,
+      onClientMessage: () => {},
+      getSnapshot: () => [],
+      onPushSubscribe: (sub) => received.push(sub),
+      vapidPublicKey: "test-public-key",
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/push-subscribe?token=tok`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ endpoint: "https://push.example/1", keys: { p256dh: "a", auth: "b" } }),
+    });
+
+    expect(response.status).toBe(204);
+    expect(received).toEqual([{ endpoint: "https://push.example/1", keys: { p256dh: "a", auth: "b" } }]);
+  });
+
+  test("POST /push-subscribe with a bad token returns 401", async () => {
+    const bus = new EventBus<ServerMessage>();
+    server = startWsServer({
+      token: "tok",
+      hostname: "127.0.0.1",
+      port: 0,
+      bus,
+      onClientMessage: () => {},
+      getSnapshot: () => [],
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/push-subscribe?token=wrong`, {
+      method: "POST",
+      body: JSON.stringify({ endpoint: "x", keys: { p256dh: "a", auth: "b" } }),
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  test("GET /vapid-public-key with a valid token returns the key", async () => {
+    const bus = new EventBus<ServerMessage>();
+    server = startWsServer({
+      token: "tok",
+      hostname: "127.0.0.1",
+      port: 0,
+      bus,
+      onClientMessage: () => {},
+      getSnapshot: () => [],
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/vapid-public-key?token=tok`);
+
+    expect(await response.json()).toEqual({ publicKey: "test-public-key" });
+  });
+
+  test("POST /push-subscribe with malformed JSON returns 400", async () => {
+    const bus = new EventBus<ServerMessage>();
+    server = startWsServer({
+      token: "tok",
+      hostname: "127.0.0.1",
+      port: 0,
+      bus,
+      onClientMessage: () => {},
+      getSnapshot: () => [],
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/push-subscribe?token=tok`, {
+      method: "POST",
+      body: "not valid json",
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  test("GET /vapid-public-key with a bad token returns 401", async () => {
+    const bus = new EventBus<ServerMessage>();
+    server = startWsServer({
+      token: "tok",
+      hostname: "127.0.0.1",
+      port: 0,
+      bus,
+      onClientMessage: () => {},
+      getSnapshot: () => [],
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/vapid-public-key?token=wrong`);
+
+    expect(response.status).toBe(401);
   });
 });

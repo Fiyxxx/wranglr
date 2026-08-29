@@ -25,16 +25,22 @@ type SendImpl = (subscription: PushSubscription, payload: string) => Promise<unk
 export class PushManager {
   private subscriptions: PushSubscription[] = [];
   private send: SendImpl;
+  private publicKey: string;
 
   constructor(vapidKeys: VapidKeys, sendImpl?: SendImpl) {
     // Only set VAPID details when using real sendNotification; tests inject mocks with fake keys that would fail webpush's validation.
     if (!sendImpl) {
       webpush.setVapidDetails("mailto:tech@ecovolt.ai", vapidKeys.publicKey, vapidKeys.privateKey);
     }
+    this.publicKey = vapidKeys.publicKey;
     this.send =
       sendImpl ??
       ((subscription, payload) =>
         webpush.sendNotification(subscription as unknown as webpush.PushSubscription, payload));
+  }
+
+  get vapidPublicKey(): string {
+    return this.publicKey;
   }
 
   addSubscription(sub: PushSubscription): void {
