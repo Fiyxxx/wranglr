@@ -10,10 +10,19 @@ const HookPayloadSchema = z.object({
   tool_response: z.record(z.string(), z.unknown()).optional(),
 });
 
+export interface PreToolUseDecision {
+  decision: "allow" | "deny";
+  reason: string;
+}
+
 export interface HookServerOptions {
   port: number;
   bus: EventBus<ServerMessage>;
-  onPreToolUse?: (event: { worktreePath: string; tool: string; input: Record<string, unknown> }) => void;
+  onPreToolUse?: (event: {
+    worktreePath: string;
+    tool: string;
+    input: Record<string, unknown>;
+  }) => Promise<PreToolUseDecision>;
 }
 
 export function startHookServer(options: HookServerOptions): { stop: () => void; port: number } {
@@ -41,8 +50,15 @@ export function startHookServer(options: HookServerOptions): { stop: () => void;
         output: tool_response ?? null,
       });
 
-      if (hook_event_name === "PreToolUse") {
-        options.onPreToolUse?.({ worktreePath: cwd, tool: tool_name, input: tool_input });
+      if (hook_event_name === "PreToolUse" && options.onPreToolUse) {
+        const result = await options.onPreToolUse({ worktreePath: cwd, tool: tool_name, input: tool_input });
+        return Response.json({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: result.decision,
+            permissionDecisionReason: result.reason,
+          },
+        });
       }
 
       return new Response("ok");

@@ -41,7 +41,7 @@ describe("hook-server", () => {
     ]);
   });
 
-  test("invokes onPreToolUse for a PreToolUse payload", async () => {
+  test("awaits onPreToolUse and returns its decision as hookSpecificOutput JSON", async () => {
     const bus = new EventBus<ServerMessage>();
     const received: ServerMessage[] = [];
     const preToolCalls: unknown[] = [];
@@ -49,10 +49,13 @@ describe("hook-server", () => {
     server = startHookServer({
       port: 0,
       bus,
-      onPreToolUse: (event) => preToolCalls.push(event),
+      onPreToolUse: async (event) => {
+        preToolCalls.push(event);
+        return { decision: "deny", reason: "test denial" };
+      },
     });
 
-    await fetch(`http://127.0.0.1:${server.port}/hook`, {
+    const response = await fetch(`http://127.0.0.1:${server.port}/hook`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -66,6 +69,13 @@ describe("hook-server", () => {
     expect(preToolCalls).toEqual([
       { worktreePath: "/repo/feature-x", tool: "Bash", input: { command: "ls" } },
     ]);
+    expect(await response.json()).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "test denial",
+      },
+    });
     expect(received).toEqual([
       {
         type: "hook_event",
@@ -76,6 +86,25 @@ describe("hook-server", () => {
         output: null,
       },
     ]);
+  });
+
+  test("PreToolUse with no onPreToolUse configured still returns ok", async () => {
+    const bus = new EventBus<ServerMessage>();
+    server = startHookServer({ port: 0, bus });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/hook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        hook_event_name: "PreToolUse",
+        cwd: "/repo/feature-x",
+        tool_name: "Read",
+        tool_input: {},
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
   });
 
   test("returns 400 for a malformed payload", async () => {

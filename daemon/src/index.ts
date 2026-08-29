@@ -6,6 +6,8 @@ import { startWsServer } from "./ws-server";
 import { startHookServer } from "./hooks/hook-server";
 import { decide, loadPolicyConfig } from "./policy/policy-engine";
 import { loadOrCreateVapidKeys, PushManager } from "./push/web-push";
+import { ApprovalRegistry } from "./approvals/approval-registry";
+import { assessRisk } from "./approvals/risk";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -46,24 +48,44 @@ await herdrAdapter.onSessionChange((sessions) => {
   bus.publish(sessionsToWorktreeStatus(sessions));
 });
 
+const approvalRegistry = new ApprovalRegistry();
+
 function onClientMessage(msg: ClientMessage): void {
   if (msg.type === "prompt") {
     const session = latestSessions.find((s) => s.cwd === msg.worktreePath);
     if (session) void herdrAdapter.sendKeys(session.paneId, [msg.text, "Enter"]);
+  } else if (msg.type === "approval_response") {
+    approvalRegistry.respond(msg.id, msg.decision);
   }
-  // approval_response handling is wired up once the hook receiver tracks
-  // pending approval requests keyed by id (Task 6 only publishes hook_event;
-  // approval_request/response correlation is future scope, not v1).
 }
 
 startHookServer({
   port: HOOK_PORT,
   bus,
-  onPreToolUse: ({ worktreePath, tool }) => {
-    const decision = decide(policyConfig, worktreePath, tool);
-    if (decision === "ask") {
-      void pushManager.notifyAll({ title: "Wranglr", body: `${tool} awaiting approval in ${worktreePath}` });
+  onPreToolUse: async ({ worktreePath, tool, input }) => {
+    const policyDecision = decide(policyConfig, worktreePath, tool);
+    if (policyDecision === "allow") {
+      return { decision: "allow", reason: "Auto-allowed by policy" };
     }
+    if (policyDecision === "block") {
+      return { decision: "deny", reason: "Blocked by policy" };
+    }
+
+    const id = crypto.randomUUID();
+    bus.publish({
+      type: "approval_request",
+      id,
+      worktreePath,
+      tool,
+      input,
+      risk: assessRisk(tool),
+    });
+    void pushManager.notifyAll({ title: "Wranglr", body: `${tool} awaiting approval in ${worktreePath}` });
+
+    const approvalDecision = await approvalRegistry.request(id, 120_000);
+    return approvalDecision === "approve"
+      ? { decision: "allow", reason: "Approved via Wranglr" }
+      : { decision: "deny", reason: "Denied (no response within 120s)" };
   },
 });
 
