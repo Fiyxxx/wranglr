@@ -82,4 +82,21 @@ describe("WranglrWsClient", () => {
 
     expect(statuses).toEqual(["connecting", "open", "closed"]);
   });
+
+  test("calling close() twice only fires onStatusChange once", async () => {
+    const server = startFakeServer();
+    const statuses: ConnectionStatus[] = [];
+
+    const client = new WranglrWsClient(`ws://127.0.0.1:${server.port}`, {
+      onMessage: () => {},
+      onStatusChange: (status) => statuses.push(status),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    client.close();
+    client.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(statuses).toEqual(["connecting", "open", "closed"]);
+  });
 });

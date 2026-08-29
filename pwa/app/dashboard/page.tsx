@@ -1,6 +1,8 @@
 "use client";
 
 import { useWranglr } from "../../lib/store";
+import { loadPairing } from "../../lib/pairing";
+import { registerPush } from "../../lib/push";
 
 export default function DashboardPage() {
   const { state } = useWranglr();
@@ -20,6 +22,14 @@ export default function DashboardPage() {
           );
         })}
       </ul>
+      <button
+        onClick={() => {
+          const pairing = loadPairing();
+          if (pairing) void registerPush(pairing);
+        }}
+      >
+        Enable notifications
+      </button>
     </main>
   );
 }

@@ -36,6 +36,7 @@ export class WranglrWsClient {
   }
 
   close(): void {
+    if (this.closedByUser) return;
     this.closedByUser = true;
     this.socket.close();
     this.handlers.onStatusChange("closed");

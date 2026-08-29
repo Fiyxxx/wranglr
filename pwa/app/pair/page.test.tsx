@@ -19,4 +19,40 @@ describe("PairPage", () => {
 
     expect(loadPairing()).toEqual({ hostname: "100.64.1.2", port: 7420, token: "secret" });
   });
+
+  test("does not save and shows error when port is invalid", () => {
+    render(<PairPage />);
+
+    fireEvent.change(screen.getByLabelText("Hostname"), { target: { value: "100.64.1.2" } });
+    fireEvent.change(screen.getByLabelText("Port"), { target: { value: "abc" } });
+    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pair" }));
+
+    expect(screen.getByRole("alert")).toBeDefined();
+    expect(loadPairing()).toBeNull();
+  });
+
+  test("does not save and shows error when hostname is empty", () => {
+    render(<PairPage />);
+
+    fireEvent.change(screen.getByLabelText("Hostname"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Port"), { target: { value: "7420" } });
+    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pair" }));
+
+    expect(screen.getByRole("alert")).toBeDefined();
+    expect(loadPairing()).toBeNull();
+  });
+
+  test("does not save and shows error when token is empty", () => {
+    render(<PairPage />);
+
+    fireEvent.change(screen.getByLabelText("Hostname"), { target: { value: "100.64.1.2" } });
+    fireEvent.change(screen.getByLabelText("Port"), { target: { value: "7420" } });
+    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pair" }));
+
+    expect(screen.getByRole("alert")).toBeDefined();
+    expect(loadPairing()).toBeNull();
+  });
 });

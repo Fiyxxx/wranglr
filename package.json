@@ -1,5 +1,8 @@
 {
   "name": "wranglr",
   "private": true,
-  "workspaces": ["daemon", "packages/*", "pwa"]
+  "workspaces": ["daemon", "packages/*", "pwa"],
+  "scripts": {
+    "test": "bun run --filter '*' test"
+  }
 }
