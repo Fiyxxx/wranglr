@@ -3,6 +3,7 @@
   "private": true,
   "workspaces": ["daemon", "packages/*", "pwa"],
   "scripts": {
+    "start": "bun scripts/start.ts",
     "test": "bun run --filter '*' test"
   }
 }

@@ -6,10 +6,9 @@ development machine, observes active Herdr sessions, receives Claude Code hook
 events, and exposes them to a phone-friendly Next.js app over your tailnet.
 
 > **Project status:** early alpha. Wranglr is a single-user personal tool, not a
-> hardened remote-access product. The core session, approval, prompt, pairing,
-> and push-notification paths are implemented; diff presentation and runtime
-> verification wiring are still in progress. See [SPEC.md](./SPEC.md) for the
-> full design and roadmap.
+> hardened remote-access product. The session, approval, prompt, pairing, and
+> push-notification paths are implemented. See [SPEC.md](./SPEC.md) for the full
+> design and roadmap.
 
 ## What it does
 
@@ -55,24 +54,40 @@ an address reachable through Tailscale.
 
 ## Quick start
 
-### 1. Install dependencies
-
 ```bash
 git clone https://github.com/Fiyxxx/wranglr.git
 cd wranglr
-bun install
+bun run start
 ```
 
-### 2. Create a policy file
+That one command installs dependencies, builds the production PWA, creates a
+persistent pairing token and safe default policy, configures both Tailscale
+Serve endpoints, and starts the PWA and daemon. It prints the phone URL and a QR
+code. Press `Ctrl+C` to stop both local processes.
 
-The daemon expects a JSON policy file to exist before it starts:
+The two private Serve mappings remain registered with Tailscale and are reused
+the next time you start Wranglr.
+
+Start Herdr and connect Tailscale on the development machine before running the
+command. On the phone, connect the same tailnet, open the printed HTTPS URL, and
+scan the terminal QR. The dashboard should show **Connected** and list active
+Herdr agents; opening a worktree lets you send coding prompts. Install the PWA
+to the phone's home screen before enabling push notifications.
+
+Wranglr stores its generated token and policy in `~/.config/wranglr/`, so the
+same phone pairing continues to work on later runs. To run without Tailscale for
+local browser testing:
 
 ```bash
-mkdir -p ~/.config/wranglr
-cp daemon/config/policy.example.json ~/.config/wranglr/policy.json
+WRANGLR_SKIP_TAILSCALE=true bun run start
 ```
 
-Edit the copied file so its keys are absolute paths to your own worktrees:
+### Approval policy
+
+The first run creates `~/.config/wranglr/policy.json` with an empty object. This
+is safe by default: every unlisted worktree is `guarded` and every tool call
+requires phone approval. Add absolute worktree paths if you want a different
+tier:
 
 ```json
 {
@@ -91,54 +106,12 @@ Policy behavior is intentionally small and predictable:
 Unlisted worktrees default to `guarded`. An unanswered approval is denied after
 120 seconds.
 
-### 3. Build and serve the PWA
+### Claude Code hooks
 
-Build the static app and serve it locally:
-
-```bash
-bun run --cwd pwa build
-bun run --cwd pwa serve
-```
-
-The local PWA server listens on `127.0.0.1:3000` by default.
-
-### 4. Expose both local services with Tailscale Serve
-
-Wranglr uses two private HTTPS endpoints: port `443` for the PWA and port `8443`
-for the daemon. [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
-terminates TLS and keeps both endpoints inside your tailnet.
-
-```bash
-tailscale serve --bg --https=443 http://127.0.0.1:3000
-tailscale serve --bg --https=8443 http://127.0.0.1:7420
-```
-
-The command output includes your machine's `*.ts.net` hostname. Keep it for the
-next step.
-
-### 5. Start the daemon
-
-Choose a long random shared token. Bind the daemon locally, but put the secure
-Tailscale hostname and public port in its QR payload:
-
-```bash
-export WRANGLR_TOKEN="replace-with-a-long-random-value"
-export WRANGLR_BIND_HOST="127.0.0.1"
-export WRANGLR_PUBLIC_HOST="your-machine.tailnet-name.ts.net"
-export WRANGLR_PUBLIC_PORT="8443"
-export WRANGLR_SECURE="true"
-bun run --cwd daemon start
-```
-
-The daemon listens locally on port `7420`, starts its loopback-only hook server
-on port `7421`, creates its push state under `~/.config/wranglr/`, and prints a
-secure QR pairing payload in the terminal.
-
-### 6. Add Claude Code hooks
-
-Add the following to `.claude/settings.json` in each repository you want Wranglr
-to observe. Replace the command with the absolute path to this checkout's hook
-script.
+The launcher handles Wranglr itself, but it does not modify your repositories.
+Add these hooks once to `.claude/settings.json` in each repository where you
+want phone approval of Claude Code tool calls. Replace the command with the
+absolute path to this checkout's hook script.
 
 ```json
 {
@@ -172,29 +145,15 @@ script.
 If you change `WRANGLR_HOOK_PORT`, expose the same value to Claude Code's hook
 environment.
 
-### 7. Pair the phone
-
-With Tailscale connected on the phone, open:
-
-```text
-https://your-machine.tailnet-name.ts.net
-```
-
-Scan the QR shown by the daemon. For manual pairing, enter the `*.ts.net`
-hostname, port `8443`, the shared token, and enable **Use HTTPS/WSS**.
-
-After pairing, the dashboard should show **Connected** and list every active
-Herdr agent. Install the site to the phone's home screen before enabling Web Push.
-
 ## Configuration
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `WRANGLR_TOKEN` | Yes | — | Shared token for WebSocket and push endpoints |
+| `WRANGLR_TOKEN` | No | Generated and persisted | Override the shared pairing token |
 | `WRANGLR_BIND_HOST` | No | `WRANGLR_HOSTNAME` or `127.0.0.1` | Local daemon bind address |
-| `WRANGLR_PUBLIC_HOST` | No | Bind address | Hostname placed in the pairing payload |
-| `WRANGLR_PUBLIC_PORT` | No | `WRANGLR_WS_PORT` | Public daemon port placed in the pairing payload |
-| `WRANGLR_SECURE` | No | `false` | Use HTTPS/WSS in the pairing payload |
+| `WRANGLR_PUBLIC_HOST` | No | Tailscale MagicDNS name | Override the hostname placed in the pairing payload |
+| `WRANGLR_PUBLIC_PORT` | No | `8443` | Public daemon port placed in the pairing payload |
+| `WRANGLR_SECURE` | No | `true` with Tailscale | Use HTTPS/WSS in local-only mode |
 | `WRANGLR_HOSTNAME` | No | `127.0.0.1` | Backward-compatible combined bind/public hostname |
 | `WRANGLR_WS_PORT` | No | `7420` | WebSocket and push HTTP port |
 | `WRANGLR_HOOK_PORT` | No | `7421` | Loopback Claude Code hook port |
@@ -203,6 +162,7 @@ Herdr agent. Install the site to the phone's home screen before enabling Web Pus
 | `WRANGLR_VAPID_SUBJECT` | No | `mailto:wranglr@example.com` | Web Push VAPID contact URI |
 | `WRANGLR_PWA_HOST` | No | `127.0.0.1` | Static PWA server bind address |
 | `WRANGLR_PWA_PORT` | No | `3000` | Static PWA server port |
+| `WRANGLR_SKIP_TAILSCALE` | No | `false` | Skip Serve setup for local-only testing |
 
 ## Development
 
@@ -224,8 +184,7 @@ bun run --cwd pwa serve
 
 ### Phone acceptance test
 
-1. Start Herdr, the Wranglr daemon, the PWA server, and both Tailscale Serve
-   endpoints.
+1. Start Herdr, then run `bun run start` from the Wranglr checkout.
 2. Open the PWA on the phone, pair it, and confirm the badge says **Connected**.
 3. Open a listed worktree, submit a harmless prompt, and confirm **Prompt
    delivered to Herdr** appears and the agent begins the requested turn.
