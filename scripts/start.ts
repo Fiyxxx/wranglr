@@ -53,7 +53,6 @@ function findTailscale(): string | null {
     Bun.which("tailscale"),
     "/opt/homebrew/bin/tailscale",
     "/usr/local/bin/tailscale",
-    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
     "/Applications/Tailscale.app/Contents/MacOS/tailscale",
   ];
   return (
