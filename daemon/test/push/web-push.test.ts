@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
-import { loadOrCreateVapidKeys, PushManager } from "../../src/push/web-push";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { loadOrCreateVapidKeys, PushManager, type PushSubscription } from "../../src/push/web-push";
 
 const STORE_PATH = "/tmp/wranglr-test-vapid.json";
+const SUBSCRIPTIONS_PATH = "/tmp/wranglr-test-push-subscriptions.json";
 
 describe("loadOrCreateVapidKeys", () => {
   test("creates and persists a keypair on first call, reuses it on the next", () => {
@@ -31,5 +32,22 @@ describe("PushManager", () => {
 
     expect(calls.length).toBe(2);
     expect(JSON.parse(calls[0][1])).toEqual({ title: "Approval needed", body: "Bash in feature-x" });
+  });
+
+  test("persists subscriptions and de-duplicates by endpoint", async () => {
+    if (existsSync(SUBSCRIPTIONS_PATH)) unlinkSync(SUBSCRIPTIONS_PATH);
+    const calls: PushSubscription[] = [];
+    const send = async (subscription: PushSubscription) => { calls.push(subscription); };
+    const first = new PushManager({ publicKey: "pub", privateKey: "priv" }, send, SUBSCRIPTIONS_PATH);
+    first.addSubscription({ endpoint: "https://push.example/1", keys: { p256dh: "old", auth: "a" } });
+    first.addSubscription({ endpoint: "https://push.example/1", keys: { p256dh: "new", auth: "b" } });
+
+    const saved = JSON.parse(readFileSync(SUBSCRIPTIONS_PATH, "utf8"));
+    expect(saved).toEqual([{ endpoint: "https://push.example/1", keys: { p256dh: "new", auth: "b" } }]);
+
+    const restored = new PushManager({ publicKey: "pub", privateKey: "priv" }, send, SUBSCRIPTIONS_PATH);
+    await restored.notifyAll({ title: "Test", body: "Test" });
+    expect(calls).toEqual([{ endpoint: "https://push.example/1", keys: { p256dh: "new", auth: "b" } }]);
+    unlinkSync(SUBSCRIPTIONS_PATH);
   });
 });

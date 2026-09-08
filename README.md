@@ -49,7 +49,8 @@ an address reachable through Tailscale.
 - [Bun](https://bun.sh/) 1.x
 - Herdr running with its socket API available
 - Claude Code for hook integration
-- Tailscale on the development machine and phone for remote access
+- Tailscale on the development machine and phone, with its CLI available for
+  Tailscale Serve
 - A modern browser with service worker support
 
 ## Quick start
@@ -90,22 +91,50 @@ Policy behavior is intentionally small and predictable:
 Unlisted worktrees default to `guarded`. An unanswered approval is denied after
 120 seconds.
 
-### 3. Start the daemon
+### 3. Build and serve the PWA
 
-Choose a long random shared token and bind the daemon to your machine's
-Tailscale address or MagicDNS hostname:
+Build the static app and serve it locally:
+
+```bash
+bun run --cwd pwa build
+bun run --cwd pwa serve
+```
+
+The local PWA server listens on `127.0.0.1:3000` by default.
+
+### 4. Expose both local services with Tailscale Serve
+
+Wranglr uses two private HTTPS endpoints: port `443` for the PWA and port `8443`
+for the daemon. [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
+terminates TLS and keeps both endpoints inside your tailnet.
+
+```bash
+tailscale serve --bg --https=443 http://127.0.0.1:3000
+tailscale serve --bg --https=8443 http://127.0.0.1:7420
+```
+
+The command output includes your machine's `*.ts.net` hostname. Keep it for the
+next step.
+
+### 5. Start the daemon
+
+Choose a long random shared token. Bind the daemon locally, but put the secure
+Tailscale hostname and public port in its QR payload:
 
 ```bash
 export WRANGLR_TOKEN="replace-with-a-long-random-value"
-export WRANGLR_HOSTNAME="your-machine.tailnet-name.ts.net"
+export WRANGLR_BIND_HOST="127.0.0.1"
+export WRANGLR_PUBLIC_HOST="your-machine.tailnet-name.ts.net"
+export WRANGLR_PUBLIC_PORT="8443"
+export WRANGLR_SECURE="true"
 bun run --cwd daemon start
 ```
 
-The daemon listens on WebSocket port `7420`, starts its loopback-only hook server
-on port `7421`, creates VAPID keys under `~/.config/wranglr/`, and prints a QR
-pairing payload in the terminal.
+The daemon listens locally on port `7420`, starts its loopback-only hook server
+on port `7421`, creates its push state under `~/.config/wranglr/`, and prints a
+secure QR pairing payload in the terminal.
 
-### 4. Add Claude Code hooks
+### 6. Add Claude Code hooks
 
 Add the following to `.claude/settings.json` in each repository you want Wranglr
 to observe. Replace the command with the absolute path to this checkout's hook
@@ -143,31 +172,37 @@ script.
 If you change `WRANGLR_HOOK_PORT`, expose the same value to Claude Code's hook
 environment.
 
-### 5. Run and pair the web app
+### 7. Pair the phone
 
-For development on your tailnet:
+With Tailscale connected on the phone, open:
 
-```bash
-bun run --cwd pwa dev --hostname 0.0.0.0
+```text
+https://your-machine.tailnet-name.ts.net
 ```
 
-Open `http://<your-tailscale-host>:3000` on the other device. Enter the daemon
-hostname, port, and token manually, or use the QR scanner when the browser allows
-camera access.
+Scan the QR shown by the daemon. For manual pairing, enter the `*.ts.net`
+hostname, port `8443`, the shared token, and enable **Use HTTPS/WSS**.
 
-The PWA is configured as a static export. Once the production build path is
-ready for your environment, `bun run --cwd pwa build` writes the site to
-`pwa/out/`.
+After pairing, the dashboard should show **Connected** and list every active
+Herdr agent. Install the site to the phone's home screen before enabling Web Push.
 
 ## Configuration
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `WRANGLR_TOKEN` | Yes | — | Shared token for WebSocket and push endpoints |
-| `WRANGLR_HOSTNAME` | No | `127.0.0.1` | Address used by the daemon and pairing payload |
+| `WRANGLR_BIND_HOST` | No | `WRANGLR_HOSTNAME` or `127.0.0.1` | Local daemon bind address |
+| `WRANGLR_PUBLIC_HOST` | No | Bind address | Hostname placed in the pairing payload |
+| `WRANGLR_PUBLIC_PORT` | No | `WRANGLR_WS_PORT` | Public daemon port placed in the pairing payload |
+| `WRANGLR_SECURE` | No | `false` | Use HTTPS/WSS in the pairing payload |
+| `WRANGLR_HOSTNAME` | No | `127.0.0.1` | Backward-compatible combined bind/public hostname |
 | `WRANGLR_WS_PORT` | No | `7420` | WebSocket and push HTTP port |
 | `WRANGLR_HOOK_PORT` | No | `7421` | Loopback Claude Code hook port |
 | `WRANGLR_POLICY_PATH` | No | `~/.config/wranglr/policy.json` | Worktree policy JSON path |
+| `WRANGLR_HERDR_SOCKET_PATH` | No | `~/.config/herdr/herdr.sock` | Herdr socket path |
+| `WRANGLR_VAPID_SUBJECT` | No | `mailto:wranglr@example.com` | Web Push VAPID contact URI |
+| `WRANGLR_PWA_HOST` | No | `127.0.0.1` | Static PWA server bind address |
+| `WRANGLR_PWA_PORT` | No | `3000` | Static PWA server port |
 
 ## Development
 
@@ -181,7 +216,26 @@ bun run --cwd pwa test
 
 # Start the PWA development server
 bun run --cwd pwa dev
+
+# Build and serve the production PWA
+bun run --cwd pwa build
+bun run --cwd pwa serve
 ```
+
+### Phone acceptance test
+
+1. Start Herdr, the Wranglr daemon, the PWA server, and both Tailscale Serve
+   endpoints.
+2. Open the PWA on the phone, pair it, and confirm the badge says **Connected**.
+3. Open a listed worktree, submit a harmless prompt, and confirm **Prompt
+   delivered to Herdr** appears and the agent begins the requested turn.
+4. Put that worktree in the `guarded` policy tier and ask the agent to use a
+   tool. Confirm the tool input appears on the phone before approving it.
+5. Reload the PWA while an approval is pending. The approval should still be
+   present; approve or reject it and confirm the Claude Code tool resumes with
+   the same decision.
+6. Install the PWA to the home screen, select **Enable notifications**, then
+   trigger another guarded tool call to check push delivery.
 
 Repository layout:
 
@@ -199,10 +253,9 @@ SPEC.md              Technical specification and architectural decisions
   public internet.
 - Authentication is currently a shared token carried in a query parameter and
   stored in browser local storage.
-- The current client uses plain `ws://` and `http://`. TLS/WSS support is not yet
-  wired, so HTTPS-hosted clients will encounter mixed-content restrictions.
-- Camera access, installation, and Web Push generally require a secure browser
-  context; those features may therefore be limited during the HTTP-only alpha.
+- Use the HTTPS/WSS pairing mode through Tailscale Serve for camera access,
+  installation, and Web Push. Plain HTTP mode is intended only for localhost
+  development.
 - The Claude Code hook listener binds only to loopback and is not exposed to the
   tailnet.
 

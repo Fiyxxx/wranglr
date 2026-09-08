@@ -21,6 +21,7 @@ export interface WranglrState {
   worktrees: WorktreeStatus[];
   hookEvents: Array<Extract<ServerMessage, { type: "hook_event" }>>;
   pendingApprovals: PendingApproval[];
+  promptResults: Array<Extract<ServerMessage, { type: "prompt_result" }>>;
 }
 
 export const initialState: WranglrState = {
@@ -28,12 +29,12 @@ export const initialState: WranglrState = {
   worktrees: [],
   hookEvents: [],
   pendingApprovals: [],
+  promptResults: [],
 };
 
 export type WranglrAction =
   | ServerMessage
-  | { type: "connection_status"; status: ConnectionStatus }
-  | { type: "approval_resolved"; id: string };
+  | { type: "connection_status"; status: ConnectionStatus };
 
 const HOOK_EVENT_LOG_LIMIT = 200;
 
@@ -49,12 +50,14 @@ export function reducer(state: WranglrState, action: WranglrAction): WranglrStat
       return {
         ...state,
         pendingApprovals: [
-          ...state.pendingApprovals,
+          ...state.pendingApprovals.filter((approval) => approval.id !== action.id),
           { id: action.id, worktreePath: action.worktreePath, tool: action.tool, input: action.input, risk: action.risk },
         ],
       };
     case "approval_resolved":
       return { ...state, pendingApprovals: state.pendingApprovals.filter((a) => a.id !== action.id) };
+    case "prompt_result":
+      return { ...state, promptResults: [...state.promptResults, action].slice(-20) };
     case "verification_result":
       return state;
     default:
@@ -69,11 +72,15 @@ export interface WranglrContextValue {
 
 export const WranglrContext = createContext<WranglrContextValue | null>(null);
 
-export function WranglrProvider({ url, children }: { url: string; children: ReactNode }) {
+export function WranglrProvider({ url, children }: { url: string | null; children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const clientRef = useRef<WranglrWsClient | null>(null);
 
   useEffect(() => {
+    if (!url) {
+      dispatch({ type: "connection_status", status: "closed" });
+      return;
+    }
     const client = new WranglrWsClient(url, {
       onMessage: (msg) => dispatch(msg),
       onStatusChange: (status) => dispatch({ type: "connection_status", status }),

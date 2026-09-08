@@ -199,6 +199,25 @@ describe("ws-server", () => {
     expect(received).toEqual([{ endpoint: "https://push.example/1", keys: { p256dh: "a", auth: "b" } }]);
   });
 
+  test("answers CORS preflight for a secure PWA on another port", async () => {
+    const bus = new EventBus<ServerMessage>();
+    server = startWsServer({
+      token: "tok",
+      hostname: "127.0.0.1",
+      port: 0,
+      bus,
+      onClientMessage: () => {},
+      getSnapshot: () => [],
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/push-subscribe`, { method: "OPTIONS" });
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(response.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
   test("POST /push-subscribe with a bad token returns 401", async () => {
     const bus = new EventBus<ServerMessage>();
     server = startWsServer({

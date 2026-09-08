@@ -25,7 +25,7 @@ describe("Home", () => {
   });
 
   test("redirects to /dashboard when a pairing is already saved", () => {
-    savePairing({ hostname: "100.64.1.2", port: 7420, token: "tok" });
+    savePairing({ hostname: "100.64.1.2", port: 7420, token: "tok", secure: false });
     render(<Home />);
     expect(window.location.href).toBe("/dashboard");
   });

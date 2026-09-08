@@ -17,7 +17,7 @@ describe("PairPage", () => {
     fireEvent.change(screen.getByLabelText("Token"), { target: { value: "secret" } });
     fireEvent.click(screen.getByRole("button", { name: "Pair" }));
 
-    expect(loadPairing()).toEqual({ hostname: "100.64.1.2", port: 7420, token: "secret" });
+    expect(loadPairing()).toEqual({ hostname: "100.64.1.2", port: 7420, token: "secret", secure: false });
   });
 
   test("does not save and shows error when port is invalid", () => {

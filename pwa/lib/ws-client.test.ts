@@ -60,10 +60,25 @@ describe("WranglrWsClient", () => {
     });
 
     await new Promise((resolve) => setTimeout(resolve, 50));
-    client.send({ type: "prompt", worktreePath: "/repo", text: "hi" });
+    client.send({ type: "prompt", id: "prompt-1", worktreePath: "/repo", text: "hi" });
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(received).toEqual([JSON.stringify({ type: "prompt", worktreePath: "/repo", text: "hi" })]);
+    expect(received).toEqual([JSON.stringify({ type: "prompt", id: "prompt-1", worktreePath: "/repo", text: "hi" })]);
+    client.close();
+  });
+
+  test("queues a message sent while the socket is connecting", async () => {
+    const received: string[] = [];
+    const server = startFakeServer((raw) => received.push(raw));
+    const client = new WranglrWsClient(`ws://127.0.0.1:${server.port}`, {
+      onMessage: () => {},
+      onStatusChange: () => {},
+    });
+
+    client.send({ type: "prompt", id: "queued", worktreePath: "/repo", text: "continue" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(received).toEqual([JSON.stringify({ type: "prompt", id: "queued", worktreePath: "/repo", text: "continue" })]);
     client.close();
   });
 

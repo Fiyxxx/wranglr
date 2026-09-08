@@ -10,5 +10,10 @@ const LABELS = {
 
 export function ConnectionBadge() {
   const { state } = useWranglr();
-  return <div data-status={state.connectionStatus}>{LABELS[state.connectionStatus]}</div>;
+  return (
+    <div className="connection-badge" data-status={state.connectionStatus} role="status">
+      <span aria-hidden="true" />
+      {LABELS[state.connectionStatus]}
+    </div>
+  );
 }

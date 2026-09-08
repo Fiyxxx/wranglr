@@ -42,17 +42,34 @@ export const ApprovalResponseSchema = z.object({
   decision: z.enum(["approve", "reject"]),
 });
 
+export const ApprovalResolvedSchema = z.object({
+  type: z.literal("approval_resolved"),
+  id: z.string(),
+  decision: z.enum(["approve", "reject", "timeout"]),
+});
+
 export const PromptSchema = z.object({
   type: z.literal("prompt"),
+  id: z.string(),
   worktreePath: z.string(),
   text: z.string(),
+});
+
+export const PromptResultSchema = z.object({
+  type: z.literal("prompt_result"),
+  id: z.string(),
+  worktreePath: z.string(),
+  accepted: z.boolean(),
+  error: z.string().nullable(),
 });
 
 export const ServerMessageSchema = z.discriminatedUnion("type", [
   WorktreeStatusSchema,
   HookEventSchema,
   ApprovalRequestSchema,
+  ApprovalResolvedSchema,
   VerificationResultSchema,
+  PromptResultSchema,
 ]);
 
 export const ClientMessageSchema = z.discriminatedUnion("type", [

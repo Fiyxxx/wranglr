@@ -22,6 +22,7 @@ describe("DashboardPage", () => {
       ],
       hookEvents: [],
       pendingApprovals: [],
+      promptResults: [],
     });
 
     expect(screen.getByText("/repo/feature-x")).toBeTruthy();
@@ -36,10 +37,11 @@ describe("DashboardPage", () => {
       worktrees: [{ path: "/repo/feature-x", herdrPaneId: "p1", state: "working" }],
       hookEvents: [],
       pendingApprovals: [],
+      promptResults: [],
     });
 
     const link = screen.getByRole("link", { name: /feature-x/ });
-    expect(link.getAttribute("href")).toBe(`/worktree/${encodeURIComponent("/repo/feature-x")}`);
+    expect(link.getAttribute("href")).toBe(`/worktree?path=${encodeURIComponent("/repo/feature-x")}`);
   });
 
   test("shows a pending-approval count badge when approvals are waiting", () => {
@@ -48,6 +50,7 @@ describe("DashboardPage", () => {
       worktrees: [{ path: "/repo/feature-x", herdrPaneId: "p1", state: "blocked" }],
       hookEvents: [],
       pendingApprovals: [{ id: "1", worktreePath: "/repo/feature-x", tool: "Bash", input: {}, risk: "high" }],
+      promptResults: [],
     });
 
     expect(screen.getByText("1 pending")).toBeTruthy();

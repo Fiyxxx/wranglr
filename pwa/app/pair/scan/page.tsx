@@ -62,12 +62,15 @@ export default function ScanPage() {
   }, []);
 
   return (
-    <main>
-      <h1>Scan pairing QR code</h1>
+    <main className="page narrow-page">
+      <header className="hero compact-hero">
+        <p className="eyebrow">Quick pairing</p>
+        <h1>Scan the daemon QR</h1>
+      </header>
       {error && <p role="alert">{error}</p>}
       <video ref={videoRef} muted playsInline />
       <canvas ref={canvasRef} style={{ display: "none" }} />
-      <a href="/pair">Enter manually instead</a>
+      <a className="secondary-link" href="/pair">Enter details manually instead</a>
     </main>
   );
 }

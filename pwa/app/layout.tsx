@@ -1,29 +1,28 @@
-"use client";
-
 import type { ReactNode } from "react";
-import { WranglrProvider } from "../lib/store";
-import { ConnectionBadge } from "../components/ConnectionBadge";
-import { loadPairing, wsUrl } from "../lib/pairing";
+import type { Metadata, Viewport } from "next";
+import { WranglrShell } from "../components/WranglrShell";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "Wranglr",
+  description: "A mobile control surface for your coding agents",
+  manifest: "/manifest.json",
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon-192.png",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#101712",
+};
 
 export default function RootLayout({ children }: { children: ReactNode }) {
-  const pairing = loadPairing();
-
   return (
     <html lang="en">
-      <head>
-        <title>Wranglr</title>
-        <link rel="manifest" href="/manifest.json" />
-      </head>
-      <body>
-        {pairing ? (
-          <WranglrProvider url={wsUrl(pairing)}>
-            <ConnectionBadge />
-            {children}
-          </WranglrProvider>
-        ) : (
-          children
-        )}
-      </body>
+      <body><WranglrShell>{children}</WranglrShell></body>
     </html>
   );
 }

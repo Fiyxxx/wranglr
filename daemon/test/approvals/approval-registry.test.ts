@@ -22,16 +22,16 @@ describe("ApprovalRegistry", () => {
     expect(registry.respond("nonexistent", "approve")).toBe(false);
   });
 
-  test("resolves with reject on timeout when nothing responds", async () => {
+  test("resolves with timeout when nothing responds", async () => {
     const registry = new ApprovalRegistry();
     const pending = registry.request("req-3", 10);
-    expect(await pending).toBe("reject");
+    expect(await pending).toBe("timeout");
   });
 
   test("a late respond after timeout is a no-op (returns false)", async () => {
     const registry = new ApprovalRegistry();
     const pending = registry.request("req-4", 10);
-    expect(await pending).toBe("reject");
+    expect(await pending).toBe("timeout");
     expect(registry.respond("req-4", "approve")).toBe(false);
   });
 });

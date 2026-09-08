@@ -10,6 +10,7 @@ interface FakeServerState {
   subscriptionCalls: Array<{ subscriptions: Array<{ type: string; pane_id?: string }> }>;
   expandSnapshotAfter: number;
   subscribedSocket: ReturnType<typeof Bun.connect> extends Promise<infer S> ? S | null : never;
+  prompts: Array<{ target: string; text: string }>;
 }
 
 function startFakeHerdrServer(state: FakeServerState) {
@@ -63,6 +64,10 @@ function startFakeHerdrServer(state: FakeServerState) {
           } else if (req.method === "pane.send_keys") {
             reply({ type: "ok" });
             socket.end();
+          } else if (req.method === "agent.prompt") {
+            state.prompts.push(req.params);
+            reply({ type: "ok" });
+            socket.end();
           } else if (req.method === "events.subscribe") {
             state.subscriptionCalls.push(req.params);
             reply({ type: "subscription_started" });
@@ -89,7 +94,13 @@ beforeEach(() => {
   try {
     unlinkSync(SOCK_PATH);
   } catch {}
-  serverState = { snapshotCallCount: 0, subscriptionCalls: [], expandSnapshotAfter: Infinity, subscribedSocket: null };
+  serverState = {
+    snapshotCallCount: 0,
+    subscriptionCalls: [],
+    expandSnapshotAfter: Infinity,
+    subscribedSocket: null,
+    prompts: [],
+  };
   fakeServer = startFakeHerdrServer(serverState);
 });
 
@@ -133,6 +144,15 @@ describe("HerdrAdapter", () => {
     const adapter = new HerdrAdapter(client);
 
     await expect(adapter.sendKeys("w1:p1", ["Enter"])).resolves.toBeUndefined();
+  });
+
+  test("sendPrompt uses Herdr's agent.prompt API", async () => {
+    const client = new HerdrSocketClient(SOCK_PATH);
+    const adapter = new HerdrAdapter(client);
+
+    await adapter.sendPrompt("w1:p1", "run the tests");
+
+    expect(serverState.prompts).toEqual([{ target: "w1:p1", text: "run the tests" }]);
   });
 
   test("onSessionChange fires the callback with a fresh session list on a pushed event", async () => {

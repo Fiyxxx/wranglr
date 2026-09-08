@@ -1,3 +1,3 @@
-export function buildPairingPayload(hostname: string, port: number, token: string): string {
-  return JSON.stringify({ hostname, port, token });
+export function buildPairingPayload(hostname: string, port: number, token: string, secure = false): string {
+  return JSON.stringify({ hostname, port, token, secure });
 }

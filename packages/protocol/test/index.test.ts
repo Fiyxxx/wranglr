@@ -59,7 +59,7 @@ describe("protocol schemas", () => {
     };
     expect(VerificationResultSchema.parse(verification)).toEqual(verification);
 
-    const prompt = { type: "prompt", worktreePath: "/repo/feature-x", text: "continue" };
+    const prompt = { type: "prompt", id: "prompt-1", worktreePath: "/repo/feature-x", text: "continue" };
     expect(PromptSchema.parse(prompt)).toEqual(prompt);
     expect(ClientMessageSchema.parse(prompt)).toEqual(prompt);
 

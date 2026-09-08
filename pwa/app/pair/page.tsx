@@ -1,13 +1,18 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { savePairing } from "../../lib/pairing";
 
 export default function PairPage() {
   const [hostname, setHostname] = useState("");
   const [port, setPort] = useState("7420");
   const [token, setToken] = useState("");
+  const [secure, setSecure] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    setSecure(window.location.protocol === "https:");
+  }, []);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -32,28 +37,37 @@ export default function PairPage() {
       return;
     }
 
-    savePairing({ hostname, port: parsedPort, token });
+    savePairing({ hostname: hostname.trim(), port: parsedPort, token: token.trim(), secure });
     window.location.href = "/dashboard";
   }
 
   return (
-    <main>
-      <h1>Pair with your daemon</h1>
-      <form onSubmit={handleSubmit}>
+    <main className="page narrow-page">
+      <header className="hero compact-hero">
+        <p className="eyebrow">Private tailnet connection</p>
+        <h1>Pair your phone</h1>
+        <p>Use the connection details printed when the Wranglr daemon starts.</p>
+      </header>
+      <form className="card form-stack" onSubmit={handleSubmit}>
         {error && <p role="alert">{error}</p>}
 
         <label htmlFor="hostname">Hostname</label>
-        <input id="hostname" value={hostname} onChange={(e) => setHostname(e.target.value)} />
+        <input id="hostname" autoCapitalize="none" autoCorrect="off" placeholder="machine.tailnet.ts.net" value={hostname} onChange={(e) => setHostname(e.target.value)} />
 
         <label htmlFor="port">Port</label>
-        <input id="port" value={port} onChange={(e) => setPort(e.target.value)} />
+        <input id="port" inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} />
 
         <label htmlFor="token">Token</label>
-        <input id="token" value={token} onChange={(e) => setToken(e.target.value)} />
+        <input id="token" type="password" autoCapitalize="none" autoCorrect="off" value={token} onChange={(e) => setToken(e.target.value)} />
 
-        <button type="submit">Pair</button>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={secure} onChange={(e) => setSecure(e.target.checked)} />
+          Use HTTPS/WSS
+        </label>
+
+        <button className="primary-button" type="submit">Pair</button>
       </form>
-      <a href="/pair/scan">Scan QR instead</a>
+      <a className="secondary-link" href="/pair/scan">Scan the daemon QR instead</a>
     </main>
   );
 }

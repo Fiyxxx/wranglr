@@ -28,6 +28,13 @@ describe("reducer", () => {
     expect(next.pendingApprovals).toEqual([{ id: "1", worktreePath: "/repo/a", tool: "Bash", input: {}, risk: "high" }]);
   });
 
+  test("approval_request replaces a duplicate delivered after reconnect", () => {
+    const request = { type: "approval_request" as const, id: "1", worktreePath: "/repo/a", tool: "Bash", input: {}, risk: "high" as const };
+    const once = reducer(initialState, request);
+    const twice = reducer(once, request);
+    expect(twice.pendingApprovals).toHaveLength(1);
+  });
+
   test("approval_request followed by resolving it removes it once a matching response would be sent (pendingApprovals only tracks requests; removal happens via a dedicated action)", () => {
     const request = { type: "approval_request" as const, id: "1", worktreePath: "/repo/a", tool: "Bash", input: {}, risk: "high" as const };
     const withRequest = reducer(initialState, request);
@@ -38,7 +45,12 @@ describe("reducer", () => {
   test("approval_resolved removes a pending approval by id", () => {
     const request = { type: "approval_request" as const, id: "1", worktreePath: "/repo/a", tool: "Bash", input: {}, risk: "high" as const };
     const withRequest = reducer(initialState, request);
-    const cleared = reducer(withRequest, { type: "approval_resolved", id: "1" });
+    const cleared = reducer(withRequest, { type: "approval_resolved", id: "1", decision: "approve" });
     expect(cleared.pendingApprovals).toEqual([]);
+  });
+
+  test("prompt_result records delivery feedback", () => {
+    const result = { type: "prompt_result" as const, id: "p1", worktreePath: "/repo/a", accepted: true, error: null };
+    expect(reducer(initialState, result).promptResults).toEqual([result]);
   });
 });

@@ -57,6 +57,10 @@ export class HerdrAdapter {
     await this.client.request("pane.send_keys", { pane_id: paneId, keys });
   }
 
+  async sendPrompt(paneId: string, text: string): Promise<void> {
+    await this.client.request("agent.prompt", { target: paneId, text });
+  }
+
   async onSessionChange(callback: (sessions: HerdrSession[]) => void): Promise<() => void> {
     let currentUnsubscribe: (() => void) | null = null;
     let lastPaneIdSet = "";

@@ -8,18 +8,39 @@ export interface WranglrWsClientHandlers {
 }
 
 export class WranglrWsClient {
-  private socket: WebSocket;
+  private socket: WebSocket | null = null;
   private closedByUser = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectDelayMs = 500;
+  private queuedMessages: string[] = [];
 
   constructor(url: string, private handlers: WranglrWsClientHandlers) {
-    handlers.onStatusChange("connecting");
-    this.socket = new WebSocket(url);
+    this.url = url;
+    this.connect();
+  }
 
-    this.socket.addEventListener("open", () => handlers.onStatusChange("open"));
-    this.socket.addEventListener("close", () => {
-      if (!this.closedByUser) handlers.onStatusChange("closed");
+  private url: string;
+
+  private connect(): void {
+    if (this.closedByUser) return;
+    this.handlers.onStatusChange("connecting");
+    const socket = new WebSocket(this.url);
+    this.socket = socket;
+
+    socket.addEventListener("open", () => {
+      this.reconnectDelayMs = 500;
+      this.handlers.onStatusChange("open");
+      for (const message of this.queuedMessages.splice(0)) socket.send(message);
     });
-    this.socket.addEventListener("message", (event) => {
+    socket.addEventListener("close", () => {
+      if (this.socket === socket) this.socket = null;
+      if (this.closedByUser) return;
+      this.handlers.onStatusChange("closed");
+      const delay = this.reconnectDelayMs;
+      this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 10_000);
+      this.reconnectTimer = setTimeout(() => this.connect(), delay);
+    });
+    socket.addEventListener("message", (event) => {
       let parsed: unknown;
       try {
         parsed = JSON.parse(String(event.data));
@@ -27,18 +48,27 @@ export class WranglrWsClient {
         return;
       }
       const result = ServerMessageSchema.safeParse(parsed);
-      if (result.success) handlers.onMessage(result.data);
+      if (result.success) this.handlers.onMessage(result.data);
     });
   }
 
   send(msg: ClientMessage): void {
-    this.socket.send(JSON.stringify(msg));
+    const serialized = JSON.stringify(msg);
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(serialized);
+    } else {
+      this.queuedMessages.push(serialized);
+    }
   }
 
   close(): void {
     if (this.closedByUser) return;
     this.closedByUser = true;
-    this.socket.close();
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.queuedMessages = [];
+    this.socket?.close();
+    this.socket = null;
     this.handlers.onStatusChange("closed");
   }
 }
