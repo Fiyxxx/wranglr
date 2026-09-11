@@ -2,7 +2,9 @@
 
 Wranglr puts your real Herdr terminal in a desktop- and phone-friendly PWA. A
 small Bun daemon mirrors ANSI pane output, forwards raw keyboard input to the
-same pane, observes session state, and carries approvals over your tailnet.
+same pane, observes session state, and carries approvals to your phone —
+by default over your tailnet, or reachable from any network with no extra app
+via Cloudflare Tunnel. See [Networking modes](#networking-modes).
 
 > **Project status:** early alpha. Wranglr is a single-user personal tool, not a
 > hardened remote-access product. The session, approval, prompt, pairing, and
@@ -41,24 +43,19 @@ Phone or browser                         Development machine
 
 The daemon talks directly to Herdr's Unix socket at
 `~/.config/herdr/herdr.sock`. Claude Code hooks reach a separate HTTP listener
-bound to `127.0.0.1`, while the authenticated WebSocket listener is reached
-through Tailscale Serve, which terminates TLS and proxies to the daemon's
-loopback port. This gives you a stable HTTPS URL reachable from anywhere your
-tailnet reaches, not just the same Wi-Fi network. See
-[SECURITY.md](./SECURITY.md) for the full trust model.
-
-Prefer not to install Tailscale? Run with `WRANGLR_SKIP_TAILSCALE=true` for a
-plain local-network mode — the launcher auto-detects this machine's LAN IP and
-binds directly to it instead. Same Wi-Fi only, plain http by default (see
-"Local-network mode" below).
+bound to `127.0.0.1`. The authenticated WebSocket listener is reached through
+one of three [networking modes](#networking-modes) — Tailscale Serve by
+default, or `WRANGLR_TUNNEL=cloudflare` / `WRANGLR_TUNNEL=none` if you'd
+rather not install Tailscale. See [SECURITY.md](./SECURITY.md) for the full
+trust model of each.
 
 ## Prerequisites
 
 - [Bun](https://bun.sh/) 1.x
 - Herdr running with its socket API available
 - Claude Code for hook integration
-- Tailscale on the development machine and phone, with its CLI available for
-  Tailscale Serve (or run local-network-only mode — see below)
+- One of: Tailscale (default), `cloudflared`, or nothing at all if you're
+  staying on the same Wi-Fi — see [Networking modes](#networking-modes)
 - A modern browser with service worker support
 
 ## Quick start
@@ -70,39 +67,60 @@ bun run start
 ```
 
 That one command installs dependencies, builds the production PWA, creates a
-persistent pairing token and safe default policy, configures both Tailscale
-Serve endpoints, and starts the PWA and daemon. It prints the phone URL and a QR
-code. Press `Ctrl+C` to stop both local processes.
+persistent pairing token and safe default policy, sets up networking (default:
+Tailscale Serve), and starts the PWA and daemon. It prints the phone URL and a
+QR code. Press `Ctrl+C` to stop both local processes.
 
-The two private Serve mappings remain registered with Tailscale and are reused
-the next time you start Wranglr.
-
-Start Herdr and connect Tailscale on the development machine before running the
-command. On the phone, connect the same tailnet, open the printed HTTPS URL, and
-scan the terminal QR (or use the printed hostname/port/token to pair manually
-at `/pair`). The dashboard should show **Connected** and list active Herdr
-agents; opening a worktree lets you send coding prompts. Install the PWA to the
-phone's home screen before enabling push notifications.
+Start Herdr on the development machine before running the command. On the
+phone, open the printed URL and scan the terminal QR (or use the printed
+hostname/port/token to pair manually at `/pair`). The dashboard should show
+**Connected** and list active Herdr agents; opening a worktree lets you send
+coding prompts. Install the PWA to the phone's home screen before enabling
+push notifications.
 
 Wranglr stores its generated token and policy in `~/.config/wranglr/`, so the
 same phone pairing continues to work on later runs.
 
-### Local-network mode (no Tailscale)
+## Networking modes
 
-To run without Tailscale, for local browser testing or if you'd rather not
-install it:
+Set `WRANGLR_TUNNEL` to choose how your phone reaches the daemon. All three
+share the same token auth, approval flow, and policy engine — only
+reachability and transport differ.
+
+| | `tailscale` (default) | `cloudflare` | `none` |
+| --- | --- | --- | --- |
+| Extra install | Tailscale app, both devices | `cloudflared`, dev machine only | Nothing |
+| Reachable from | Anywhere on your tailnet | Anywhere with internet | Same Wi-Fi only |
+| Transport | HTTPS/WSS (Tailscale Serve) | HTTPS/WSS (Cloudflare edge) | Plain http/ws by default |
+| URL stability | Stable (MagicDNS name) | Changes every restart | Stable (LAN IP, usually) |
+| Who can see traffic in transit | Only your devices (WireGuard) | Cloudflare's edge terminates TLS | Anyone on your LAN segment (plaintext) |
 
 ```bash
-WRANGLR_SKIP_TAILSCALE=true bun run start
+# Default — needs Tailscale installed and connected on both devices
+bun run start
+
+# No app to install anywhere; needs `cloudflared` on this machine only
+# (e.g. `brew install cloudflared`); reachable from any network
+WRANGLR_TUNNEL=cloudflare bun run start
+
+# Nothing to install; phone must be on the same Wi-Fi network
+WRANGLR_TUNNEL=none bun run start
 ```
 
-The launcher auto-detects this machine's LAN IPv4 address, binds the daemon
-and PWA server to all interfaces, and prints that address as the phone URL.
-Your phone must be on the same Wi-Fi network — there's no NAT traversal or
-relay in this mode. It's also plain http by default, so camera-based QR
-scanning and Web Push won't work (both need a secure context) — pair manually
-at `/pair` instead, or put your own TLS-terminating reverse proxy in front and
-set `WRANGLR_SECURE=true`.
+`WRANGLR_TUNNEL=cloudflare` starts two Cloudflare Quick Tunnels (one for the
+PWA, one for the daemon) and prints their `*.trycloudflare.com` URLs — these
+change every time you restart. Camera QR scanning and Web Push work in this
+mode (it's real HTTPS), unlike `none`. Read [SECURITY.md](./SECURITY.md)
+before choosing — Cloudflare's edge can see your traffic in transit (it
+terminates TLS to route it), which is a real trust trade-off Tailscale doesn't
+have.
+
+`WRANGLR_TUNNEL=none` (formerly `WRANGLR_SKIP_TAILSCALE=true`, still accepted)
+auto-detects this machine's LAN IPv4 address and binds directly to it. No NAT
+traversal or relay — same Wi-Fi only. Plain http by default, so camera-based
+QR scanning and Web Push won't work (both need a secure context) — pair
+manually at `/pair` instead, or put your own TLS-terminating reverse proxy in
+front and set `WRANGLR_SECURE=true`.
 
 ### Approval policy
 
@@ -171,20 +189,21 @@ environment.
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
+| `WRANGLR_TUNNEL` | No | `tailscale` | `tailscale`, `cloudflare`, or `none` — see [Networking modes](#networking-modes) |
 | `WRANGLR_TOKEN` | No | Generated and persisted | Override the shared pairing token |
-| `WRANGLR_BIND_HOST` | No | `WRANGLR_HOSTNAME`, else `127.0.0.1` (Tailscale) or `0.0.0.0` (skip mode) | Local daemon bind address |
-| `WRANGLR_PUBLIC_HOST` | No | Tailscale MagicDNS name, or auto-detected LAN IPv4 in skip mode | Override the hostname placed in the pairing payload |
-| `WRANGLR_PUBLIC_PORT` | No | `8443` (Tailscale), or `WRANGLR_WS_PORT` (skip mode) | Public daemon port placed in the pairing payload |
-| `WRANGLR_SECURE` | No | `true` with Tailscale, `false` in skip mode | Use HTTPS/WSS in local-only mode |
+| `WRANGLR_BIND_HOST` | No | `WRANGLR_HOSTNAME`, else `127.0.0.1` (`tailscale`/`cloudflare`) or `0.0.0.0` (`none`) | Local daemon bind address |
+| `WRANGLR_PUBLIC_HOST` | No | Tailscale MagicDNS name / Cloudflare tunnel hostname / auto-detected LAN IPv4 | Override the hostname placed in the pairing payload |
+| `WRANGLR_PUBLIC_PORT` | No | `8443` (`tailscale`), `443` (`cloudflare`), or `WRANGLR_WS_PORT` (`none`) | Public daemon port placed in the pairing payload |
+| `WRANGLR_SECURE` | No | `true` (`tailscale`/`cloudflare`), `false` (`none`) | Use HTTPS/WSS |
 | `WRANGLR_HOSTNAME` | No | `127.0.0.1` | Backward-compatible combined bind/public hostname |
 | `WRANGLR_WS_PORT` | No | `7420` | WebSocket and push HTTP port |
 | `WRANGLR_HOOK_PORT` | No | `7421` | Loopback Claude Code hook port |
 | `WRANGLR_POLICY_PATH` | No | `~/.config/wranglr/policy.json` | Worktree policy JSON path |
 | `WRANGLR_HERDR_SOCKET_PATH` | No | `~/.config/herdr/herdr.sock` | Herdr socket path |
 | `WRANGLR_VAPID_SUBJECT` | No | `mailto:wranglr@example.com` | Web Push VAPID contact URI |
-| `WRANGLR_PWA_HOST` | No | `127.0.0.1` (Tailscale) or `0.0.0.0` (skip mode) | Static PWA server bind address |
+| `WRANGLR_PWA_HOST` | No | `127.0.0.1` (`tailscale`/`cloudflare`) or `0.0.0.0` (`none`) | Static PWA server bind address |
 | `WRANGLR_PWA_PORT` | No | `3000` | Static PWA server port |
-| `WRANGLR_SKIP_TAILSCALE` | No | `false` | Skip Tailscale Serve setup, use local-network mode instead |
+| `WRANGLR_SKIP_TAILSCALE` | No | `false` | Deprecated alias for `WRANGLR_TUNNEL=none` |
 
 ## Development
 
@@ -238,5 +257,5 @@ public internet, and treat the pairing token like an SSH key.
 
 Wranglr is a single-user remote view of existing Herdr panes. Herdr remains the
 PTY and scrollback source of truth; Wranglr does not create a parallel SSH shell.
-Multi-user collaboration, cloud relays, and custom NAT traversal (beyond what
-Tailscale already provides) are outside the current scope.
+Multi-user collaboration and custom NAT traversal beyond what Tailscale or
+Cloudflare Tunnel already provide are outside the current scope.

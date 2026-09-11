@@ -42,7 +42,9 @@ Phone (PWA, Next.js)              Dev machine (daemon, Bun/TypeScript)
 
 Reachability is handled entirely by Tailscale (installed as a normal app on both the phone and the dev machine). The daemon binds to loopback; Tailscale Serve terminates TLS and proxies the tailnet-facing HTTPS port to it. The PWA connects to `wss://<machine>.<tailnet>.ts.net:<port>`. No relay server, no signaling server, no WebRTC, no embedded VPN library. This was a deliberate simplification — see Section 8.
 
-**`WRANGLR_SKIP_TAILSCALE=true` alternative:** for anyone who'd rather not install Tailscale, the daemon instead binds to all interfaces (`0.0.0.0`) and the launcher auto-detects the machine's LAN IPv4 address for the pairing payload. Same Wi-Fi network only, no NAT traversal, plain http unless you supply your own TLS proxy. This trades Tailscale's cross-network reachability and automatic TLS for zero extra app install.
+**Alternatives via `WRANGLR_TUNNEL`:** for anyone who'd rather not install Tailscale, two other modes are supported (see Section 8 for why each rejected/accepted option landed where it did):
+- `cloudflare` — the daemon still binds to loopback, but two Cloudflare Quick Tunnels (`cloudflared tunnel --url`) proxy the daemon and PWA to public `*.trycloudflare.com` HTTPS hostnames instead of Tailscale Serve. Reachable from any network, no app to install on the phone, `cloudflared` needed on the dev machine only. Trade-off: Cloudflare's edge terminates TLS to route the traffic, so it's not end-to-end between your own devices the way Tailscale is (see SECURITY.md).
+- `none` — the daemon instead binds to all interfaces (`0.0.0.0`) and the launcher auto-detects the machine's LAN IPv4 address for the pairing payload. Same Wi-Fi network only, no NAT traversal, plain http unless you supply your own TLS proxy. Trades all cross-network reachability for zero extra app or third party involved at all.
 
 ## 5. Herdr and Claude Code are two separate integration concerns
 
@@ -84,7 +86,7 @@ Yes, Next.js works for this. Since there's no need for server-side rendering, AP
 ## 7. What to implement now
 
 ### 7.1 Daemon: WebSocket server + event bus
-- Bun WebSocket server bound to loopback by default, reached via Tailscale Serve's TLS-terminating proxy (or bound to all interfaces directly in `WRANGLR_SKIP_TAILSCALE` mode), token-authenticated on connect.
+- Bun WebSocket server bound to loopback by default, reached via Tailscale Serve's or Cloudflare Tunnel's TLS-terminating proxy (or bound to all interfaces directly in `WRANGLR_TUNNEL=none` mode), token-authenticated on connect.
 - Internal event bus (simple pub/sub) — every other module publishes events here; the WebSocket handler subscribes and serializes to connected clients, and relays client messages (approve/reject, prompt text) back into the bus.
 - Message protocol: JSON messages with a `type` field. Minimum set for v1:
   - `worktree_status` (daemon → phone): active worktrees, which Herdr pane each is in, idle/running state.
@@ -129,7 +131,7 @@ This is intentionally simple static config (a JSON file mapping worktree path �
 
 - **Always-on cloud container (Cosyra-style)** — rejected: recurring cost, doesn't fit "use my own subscription" requirement, doesn't add anything the daemon-on-own-machine model doesn't already give.
 - **Native app with Mosh/SSH** — rejected in favor of a PWA speaking directly to the local daemon over the tailnet. Raw terminal interaction is required, but Herdr already owns the PTY and scrollback, so a second SSH session would be the wrong source of truth.
-- **Outbound-relay pattern (Paseo/Happy style)** — rejected: Tailscale already solves reachability for free without a relay to host and maintain.
+- **Self-hosted outbound-relay pattern (Paseo/Happy style, running your own relay)** — rejected: would mean running and patching a public relay server yourself, real ongoing infra for a single-user tool. **Cloudflare Tunnel is the same shape of pattern but adopted anyway** (`WRANGLR_TUNNEL=cloudflare`) because it's a free, third-party-operated relay with zero maintenance on our side — the trade-off is Cloudflare's edge seeing traffic in transit (documented in SECURITY.md), not the maintenance burden that got the self-hosted version rejected.
 - **Embedded Tailscale (`tsnet` compiled into the app)** — rejected: real native-module integration cost for no benefit over just installing the Tailscale app normally on both devices.
 - **WebRTC DataChannels + predictive echo** — rejected for now. WebSocket input over a private tailnet is the baseline; revisit only if measured typing latency proves it necessary.
 - **Full public-key pairing/handshake ceremony on top of Tailscale** — deferred, not rejected outright: real defense-in-depth, but for a single-user tool where Tailscale ACLs already restrict reachability to owned devices, a shared token with constant-time comparison and rate limiting is proportionate for now.
