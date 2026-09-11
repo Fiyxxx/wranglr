@@ -87,6 +87,12 @@ Set `WRANGLR_TUNNEL` to choose how your phone reaches the daemon. All three
 share the same token auth, approval flow, and policy engine — only
 reachability and transport differ.
 
+Run `bun run start` with no `WRANGLR_TUNNEL` set in an interactive terminal
+and it asks you to pick one before doing anything slow (install/build) — so a
+misconfigured Tailscale or a first-time choice doesn't cost you a full build
+first. Set the env var to skip the prompt (scripts, CI, and any non-interactive
+run always skip it and default to `tailscale`, matching the old behavior).
+
 | | `tailscale` (default) | `cloudflare` | `none` |
 | --- | --- | --- | --- |
 | Extra install | Tailscale app, both devices | `cloudflared`, dev machine only | Nothing |

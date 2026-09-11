@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline/promises";
 
 const repoRoot = join(import.meta.dir, "..");
 const configDir = join(homedir(), ".config", "wranglr");
@@ -10,7 +11,27 @@ const policyPath = process.env.WRANGLR_POLICY_PATH ?? join(configDir, "policy.js
 
 type TunnelMode = "tailscale" | "cloudflare" | "none";
 
-function resolveTunnelMode(): TunnelMode {
+async function promptTunnelMode(): Promise<TunnelMode> {
+  console.log("\nHow should your phone reach this machine?");
+  console.log("  1) Tailscale         — reachable anywhere on your tailnet (needs the Tailscale app on both devices) [default]");
+  console.log("  2) Cloudflare Tunnel — reachable from any network, no phone app (needs `cloudflared` on this machine)");
+  console.log("  3) Local network only — same Wi-Fi only, nothing extra to install");
+  console.log("(Set WRANGLR_TUNNEL=tailscale|cloudflare|none to skip this prompt next time.)");
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question("Choose 1/2/3 [1]: ")).trim();
+    if (answer === "" || answer === "1") return "tailscale";
+    if (answer === "2") return "cloudflare";
+    if (answer === "3") return "none";
+    console.log(`Unrecognized choice "${answer}", defaulting to Tailscale.`);
+    return "tailscale";
+  } finally {
+    rl.close();
+  }
+}
+
+async function resolveTunnelMode(): Promise<TunnelMode> {
   const explicit = process.env.WRANGLR_TUNNEL?.trim().toLowerCase();
   if (explicit === "tailscale" || explicit === "cloudflare" || explicit === "none") return explicit;
   if (explicit) {
@@ -18,6 +39,9 @@ function resolveTunnelMode(): TunnelMode {
   }
   // Backward-compatible alias for the older local-only flag.
   if (process.env.WRANGLR_SKIP_TAILSCALE === "true") return "none";
+  // Ask interactively when running in a real terminal with no explicit choice; otherwise (scripts,
+  // CI, backgrounded processes) keep the old default so non-interactive usage doesn't hang.
+  if (process.stdin.isTTY && process.stdout.isTTY) return promptTunnelMode();
   return "tailscale";
 }
 
@@ -176,7 +200,7 @@ async function main(): Promise<void> {
   const wsPort = envPort("WRANGLR_WS_PORT", 7420);
   const hookPort = envPort("WRANGLR_HOOK_PORT", 7421);
   const pwaPort = envPort("WRANGLR_PWA_PORT", 3000);
-  const tunnelMode = resolveTunnelMode();
+  const tunnelMode = await resolveTunnelMode();
   const defaultPublicPort = tunnelMode === "tailscale" ? 8443 : tunnelMode === "cloudflare" ? 443 : wsPort;
   const publicPort = envPort("WRANGLR_PUBLIC_PORT", defaultPublicPort);
   const token = loadOrCreateToken();
@@ -197,6 +221,10 @@ async function main(): Promise<void> {
         "or WRANGLR_TUNNEL=none instead.",
     );
   }
+
+  // Resolve (and validate) the Tailscale hostname before the slow install/build steps below, so a
+  // disconnected Tailscale fails immediately instead of after a full production build.
+  const tailscaleHost = tailscale ? await tailscaleHostname(tailscale) : null;
 
   console.log("\nPreparing Wranglr…");
   await run([process.execPath, "install"]);
@@ -230,12 +258,12 @@ async function main(): Promise<void> {
         "every time you restart Wranglr in this mode.",
     );
   } else {
-    // Checked above before doing the install and production build.
-    if (!tailscale) throw new Error("Tailscale CLI was not found.");
-    publicHostname = await tailscaleHostname(tailscale);
+    // Checked and resolved above before doing the install and production build.
+    if (!tailscaleHost) throw new Error("Tailscale CLI was not found.");
+    publicHostname = tailscaleHost;
     secure = true;
-    await run([tailscale, "serve", "--bg", "--https=443", `http://127.0.0.1:${pwaPort}`]);
-    await run([tailscale, "serve", "--bg", `--https=${publicPort}`, `http://127.0.0.1:${wsPort}`]);
+    await run([tailscale!, "serve", "--bg", "--https=443", `http://127.0.0.1:${pwaPort}`]);
+    await run([tailscale!, "serve", "--bg", `--https=${publicPort}`, `http://127.0.0.1:${wsPort}`]);
     phoneUrl = `https://${publicHostname}`;
   }
 
