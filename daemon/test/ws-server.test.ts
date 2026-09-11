@@ -295,4 +295,44 @@ describe("ws-server", () => {
 
     expect(response.status).toBe(401);
   });
+
+  test("a token of a different length than expected is rejected, not thrown on", async () => {
+    const bus = new EventBus<ServerMessage>();
+    server = startWsServer({
+      token: "a-much-longer-correct-token",
+      hostname: "127.0.0.1",
+      port: 0,
+      bus,
+      onClientMessage: () => {},
+      getSnapshot: () => [],
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/vapid-public-key?token=short`);
+
+    expect(response.status).toBe(401);
+  });
+
+  test("rate-limits repeated bad-token attempts from the same client with 429", async () => {
+    const bus = new EventBus<ServerMessage>();
+    server = startWsServer({
+      token: "correct-token",
+      hostname: "127.0.0.1",
+      port: 0,
+      bus,
+      onClientMessage: () => {},
+      getSnapshot: () => [],
+      onPushSubscribe: () => {},
+      vapidPublicKey: "test-public-key",
+    });
+
+    let lastStatus = 0;
+    for (let i = 0; i < 25; i++) {
+      const response = await fetch(`http://127.0.0.1:${server.port}/vapid-public-key?token=wrong`);
+      lastStatus = response.status;
+    }
+
+    expect(lastStatus).toBe(429);
+  });
 });

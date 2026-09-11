@@ -2,35 +2,37 @@
 
 ## 1. What this is
 
-Wranglr is a personal mobile companion for a Claude Code development workflow centered on Herdr (terminal/session manager) and git worktrees for parallel agent work. It is a PWA (not a native app) that connects to a daemon running on the developer's own machine over Tailscale, and surfaces worktree status, approval requests, diffs, and verification results, with push notifications when something needs attention.
+Wranglr is a remote Herdr terminal for a development workflow centered on Herdr and git worktrees. It is a PWA (not a native app) that connects to a daemon running on the developer's own machine over the local network. The terminal is the product: Wranglr mirrors each pane's ANSI output and sends keyboard input back to that exact pane. Session status, approvals, and notifications are supporting controls layered around it.
 
 This is a single-user personal tool. It is not being built to compete with Moshi, Paseo, Cosyra, or any other product in this space — those were evaluated during design and are referenced in Section 8 (Rejected Approaches) purely so this spec doesn't silently reintroduce ideas that were already considered and set aside.
 
 ## 2. Goals
 
-- See the status of every active Herdr session / git worktree from a phone, at a glance.
+- Read the complete available ANSI scrollback for every active Herdr pane, not a summary of agent activity.
+- Type into a Herdr pane from desktop or mobile, including control, escape, navigation, and tab keys.
+- Switch between every active Herdr session / git worktree without leaving the terminal workspace.
 - Approve or reject risky agent actions (tool calls, diffs) from a phone.
 - Get a push notification when an agent needs input or finishes a task, without keeping the app open.
 - Independently verify agent claims (tests actually pass, dependencies actually exist) before showing "safe to approve."
-- Zero ongoing cost, zero third-party infrastructure to maintain beyond Tailscale (free tier).
+- Zero ongoing cost, zero third-party infrastructure to maintain, and no extra app to install on either device.
 - Installable on a phone home screen with no App Store dependency.
 
 ## 3. Non-goals (for now)
 
-- Not a general-purpose remote terminal replacement. Live raw TTY / vim-over-the-wire is out of scope unless Section 9 gets promoted later.
+- Not a replacement for Herdr: Wranglr remotely presents and controls Herdr's existing panes; it does not host its own shells or PTYs.
 - Not multi-user, not a team tool, no shared/collaborative sessions.
 - Not trying to support harnesses other than Claude Code at this stage.
-- Not trying to solve NAT traversal ourselves — Tailscale already does this.
+- Not trying to solve NAT traversal or public reachability — the phone must be on the same local network (Wi-Fi) as the dev machine.
 
 ## 4. Architecture overview
 
 ```
 Phone (PWA, Next.js)              Dev machine (daemon, Bun/TypeScript)
 ┌────────────────────┐            ┌──────────────────────────┐
-│ Worktree/session UI │            │ WebSocket server          │
-│ Approval + diff UI  │◄──wss──────►│ (bound to Tailscale IP)  │
+│ ANSI terminal UI    │            │ WebSocket server          │
+│ Session + approvals │◄──ws───────►│ (bound to 0.0.0.0)       │
 │ Push registration   │  over      │                           │
-└────────────────────┘  Tailscale │ Herdr/tmux adapter         │
+└────────────────────┘  local Wi-Fi│ Herdr/tmux adapter         │
                                     │ Claude Code hook receiver │
                                     │ Verification module       │
                                     │ Worktree policy engine    │
@@ -38,7 +40,7 @@ Phone (PWA, Next.js)              Dev machine (daemon, Bun/TypeScript)
                                     └──────────────────────────┘
 ```
 
-Reachability is handled entirely by Tailscale (installed as a normal app on both the phone and the dev machine). The daemon binds its WebSocket server to the machine's Tailscale interface. The PWA connects to `wss://<machine>.<tailnet>.ts.net:<port>`. No relay server, no signaling server, no WebRTC, no embedded VPN library. This was a deliberate simplification — see Section 8.
+Reachability is just the local network — no VPN, relay, signaling server, or WebRTC. The daemon binds its WebSocket server to all interfaces (`0.0.0.0`); the launcher auto-detects the machine's LAN IPv4 address and embeds it in the pairing QR code / manual pairing details. The PWA connects to `ws://<lan-ip>:<port>` (or `wss://` if you've put your own TLS proxy in front — see SECURITY.md). This was a deliberate simplification to avoid requiring any extra app install — see Section 8.
 
 ## 5. Herdr and Claude Code are two separate integration concerns
 
@@ -75,12 +77,12 @@ Rationale: the daemon's workload is I/O-bound (WebSocket messages, subprocess co
 **PWA: Next.js, App Router, static export.**
 Yes, Next.js works for this. Since there's no need for server-side rendering, API routes, or a backend here (the daemon is the backend, reached directly over WebSocket), configure `output: 'export'` in `next.config` so the build produces a static site — this is what actually gets deployed/opened as the PWA, no Node server required at runtime on the phone side. For the service worker and manifest, use **Serwist** (the actively maintained successor to next-pwa — the original `next-pwa` package is archived; a maintained fork exists at `@ducanh2912/next-pwa` as an alternative if Serwist's App Router support has gaps). Add `manifest.json`, icons, and `theme-color` for home-screen install.
 
-**Auth for the WebSocket handshake:** a single shared token generated on first daemon start, entered into the PWA once during setup (paste or QR code containing the token + Tailscale hostname). This is intentionally simple — see Section 8 for why the fuller pairing/crypto ceremony is deferred.
+**Auth for the WebSocket handshake:** a single shared token generated on first daemon start, entered into the PWA once during setup (paste or QR code containing the token + LAN hostname). This is intentionally simple — see Section 8 for why the fuller pairing/crypto ceremony is deferred. The token check is constant-time and failed attempts are rate-limited per IP.
 
 ## 7. What to implement now
 
 ### 7.1 Daemon: WebSocket server + event bus
-- Bun WebSocket server bound to the Tailscale interface address, token-authenticated on connect.
+- Bun WebSocket server bound to all interfaces (`0.0.0.0`), token-authenticated on connect.
 - Internal event bus (simple pub/sub) — every other module publishes events here; the WebSocket handler subscribes and serializes to connected clients, and relays client messages (approve/reject, prompt text) back into the bus.
 - Message protocol: JSON messages with a `type` field. Minimum set for v1:
   - `worktree_status` (daemon → phone): active worktrees, which Herdr pane each is in, idle/running state.
@@ -111,10 +113,10 @@ This is intentionally simple static config (a JSON file mapping worktree path �
 - Daemon sends a push notification (via `web-push` npm package or Bun-compatible equivalent) when an `approval_request` or a task-complete event fires while no phone is actively connected.
 
 ### 7.6 PWA: core screens
-- Pairing/setup screen (enter token + Tailscale hostname, or scan QR).
-- Worktree list — one card per active worktree/Herdr session, status at a glance.
-- Approval screen — shows the pending tool call, the verification result if available, approve/reject buttons.
-- Diff view — rendered from `hook_event` diff content.
+- Pairing/setup screen (enter token + LAN hostname, or scan QR when served over HTTPS).
+- Terminal workspace — real ANSI pane output with retained scrollback, session rail, and direct keyboard input.
+- Mobile terminal toolbar — control-C, escape, tab, arrows, enter, and software-keyboard focus.
+- Inline approvals — pending tool input and approve/reject actions stay visible without replacing the terminal.
 - Push permission prompt, shown after first successful connection (not on cold load).
 
 ### 7.7 Reconnection
@@ -124,16 +126,16 @@ This is intentionally simple static config (a JSON file mapping worktree path �
 ## 8. Explicitly rejected approaches (do not reintroduce without a real, validated reason)
 
 - **Always-on cloud container (Cosyra-style)** — rejected: recurring cost, doesn't fit "use my own subscription" requirement, doesn't add anything the daemon-on-own-machine model doesn't already give.
-- **Native app with real Mosh/SSH** — rejected in favor of PWA: no App Store friction, one codebase, and the actual workload (structured events, not raw TTY) doesn't need Mosh's protocol.
-- **Outbound-relay pattern (Paseo/Happy style)** — rejected: Tailscale already solves reachability for free without a relay to host and maintain.
-- **Embedded Tailscale (`tsnet` compiled into the app)** — rejected: real native-module integration cost for no benefit over just installing the Tailscale app normally on both devices.
-- **WebRTC DataChannels + predictive echo** — rejected for v1 after a deliberate audit: this exists solely to make live keystroke-level terminal typing feel smooth, which is not a validated requirement — nothing in the current feature set does live raw-TTY interaction. Adds signaling, ICE, DTLS, and a less-traveled browser-to-Node WebRTC integration for a feature that may never be needed. See Section 9 for the trigger condition to revisit this.
-- **Full public-key pairing/handshake ceremony on top of Tailscale** — deferred, not rejected outright: real defense-in-depth, but for a single-user tool where Tailscale ACLs already restrict reachability to owned devices, a shared token is proportionate for now.
+- **Native app with Mosh/SSH** — rejected in favor of a PWA speaking directly to the local daemon over the local network. Raw terminal interaction is required, but Herdr already owns the PTY and scrollback, so a second SSH session would be the wrong source of truth.
+- **Tailscale/tsnet for reachability** — rejected: requires installing and configuring a separate app on both devices, which conflicts with "zero extra app to install." A same-Wi-Fi LAN connection needs nothing installed beyond Wranglr itself. Traded off against not working across networks/NAT — acceptable for a tool whose primary use case is "phone on the same Wi-Fi as my dev machine."
+- **Outbound-relay pattern (Paseo/Happy style)** — rejected: would add a third-party or self-hosted relay to run and trust, for a tool whose primary use case doesn't need cross-network reachability.
+- **WebRTC DataChannels + predictive echo** — rejected for now. WebSocket input over the local network is the baseline; revisit only if measured typing latency proves it necessary.
+- **Full public-key pairing/handshake ceremony** — deferred, not rejected outright: real defense-in-depth, but for a single-user tool restricted to a trusted local network, a shared token with constant-time comparison and rate limiting is proportionate for now.
 - **Adaptive, fatigue-calibrated approval escalation** — deferred: the underlying idea (don't flatly ask every time; model approval-capacity and escalate only when it matters) is good but needs real usage history to calibrate against, which doesn't exist before the static-tier version (7.4) has been used for a while.
 
 ## 9. Future considerations, and when to revisit them
 
-- **WebRTC unreliable DataChannel + predictive echo**: revisit only if a live raw-terminal view is added *and* typing on it genuinely feels laggy on real networks in daily use — not speculatively.
+- **WebRTC unreliable DataChannel + predictive echo**: revisit only if typing in the shipped terminal view genuinely feels laggy on real networks in daily use.
 - **WebTransport** as a cleaner alternative to WebRTC for the above: revisit once it's had more time to mature on iOS Safari (it only shipped there recently); treat any adoption as additive behind the same message-layer abstraction, not a rewrite.
 - **Adaptive/fatigue-aware approval escalation**: once the static per-worktree tiers (7.4) have real usage history, consider modeling approval frequency/recency to dynamically suppress low-value notifications rather than escalating everything that clears the static tier.
 - **Full pairing handshake (public-key, not shared token)**: worth adding once/if this is ever used from more than one phone, or if the threat model expands beyond "just me."

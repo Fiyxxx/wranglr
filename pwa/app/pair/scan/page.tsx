@@ -15,6 +15,12 @@ export default function ScanPage() {
     let stopped = false;
 
     async function start() {
+      if (!window.isSecureContext) {
+        setError(
+          "Camera access needs a secure connection (HTTPS). Over plain http on your local network, use \"Enter details manually instead\" below.",
+        );
+        return;
+      }
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       } catch {

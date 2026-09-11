@@ -3,7 +3,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { loadPairing, type PairingInfo, wsUrl } from "../lib/pairing";
 import { WranglrProvider } from "../lib/store";
-import { ConnectionBadge } from "./ConnectionBadge";
 
 export function WranglrShell({ children }: { children: ReactNode }) {
   const [pairing, setPairing] = useState<PairingInfo | null>();
@@ -25,7 +24,6 @@ export function WranglrShell({ children }: { children: ReactNode }) {
 
   return (
     <WranglrProvider url={pairing ? wsUrl(pairing) : null}>
-      {pairing && <ConnectionBadge />}
       {children}
     </WranglrProvider>
   );

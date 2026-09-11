@@ -11,6 +11,7 @@ interface FakeServerState {
   expandSnapshotAfter: number;
   subscribedSocket: ReturnType<typeof Bun.connect> extends Promise<infer S> ? S | null : never;
   prompts: Array<{ target: string; text: string }>;
+  inputs: Array<{ pane_id: string; text?: string; keys?: string[] }>;
 }
 
 function startFakeHerdrServer(state: FakeServerState) {
@@ -59,9 +60,13 @@ function startFakeHerdrServer(state: FakeServerState) {
             // One-shot: close after response
             socket.end();
           } else if (req.method === "pane.read") {
-            reply({ read: { text: "hello from pane" } });
+            reply({ read: { text: "\u001b[36mhello from pane\u001b[0m", revision: 12, truncated: false } });
             socket.end();
           } else if (req.method === "pane.send_keys") {
+            reply({ type: "ok" });
+            socket.end();
+          } else if (req.method === "pane.send_input") {
+            state.inputs.push(req.params);
             reply({ type: "ok" });
             socket.end();
           } else if (req.method === "agent.prompt") {
@@ -76,7 +81,7 @@ function startFakeHerdrServer(state: FakeServerState) {
           } else if (req.method === "test.emit_event") {
             // Special test helper: emit an event on the subscription connection
             if (state.subscribedSocket) {
-              state.subscribedSocket.write(JSON.stringify({ event: req.params.event, data: {} }) + "\n");
+              state.subscribedSocket.write(JSON.stringify({ event: req.params.event, data: req.params.data ?? {} }) + "\n");
             }
             reply({ type: "ok" });
             socket.end();
@@ -100,6 +105,7 @@ beforeEach(() => {
     expandSnapshotAfter: Infinity,
     subscribedSocket: null,
     prompts: [],
+    inputs: [],
   };
   fakeServer = startFakeHerdrServer(serverState);
 });
@@ -136,7 +142,18 @@ describe("HerdrAdapter", () => {
     const client = new HerdrSocketClient(SOCK_PATH);
     const adapter = new HerdrAdapter(client);
 
-    expect(await adapter.getPaneContent("w1:p1")).toBe("hello from pane");
+    expect(await adapter.getPaneContent("w1:p1")).toBe("\u001b[36mhello from pane\u001b[0m");
+  });
+
+  test("getPaneSnapshot keeps ANSI and revision metadata", async () => {
+    const client = new HerdrSocketClient(SOCK_PATH);
+    const adapter = new HerdrAdapter(client);
+
+    expect(await adapter.getPaneSnapshot("w1:p1")).toEqual({
+      text: "\u001b[36mhello from pane\u001b[0m",
+      revision: 12,
+      truncated: false,
+    });
   });
 
   test("sendKeys resolves without throwing on an ok response", async () => {
@@ -153,6 +170,14 @@ describe("HerdrAdapter", () => {
     await adapter.sendPrompt("w1:p1", "run the tests");
 
     expect(serverState.prompts).toEqual([{ target: "w1:p1", text: "run the tests" }]);
+  });
+
+  test("sendInput forwards raw terminal text and logical keys", async () => {
+    const client = new HerdrSocketClient(SOCK_PATH);
+    const adapter = new HerdrAdapter(client);
+
+    await adapter.sendInput("w1:p1", { text: "ls", keys: ["enter"] });
+    expect(serverState.inputs).toEqual([{ pane_id: "w1:p1", text: "ls", keys: ["enter"] }]);
   });
 
   test("onSessionChange fires the callback with a fresh session list on a pushed event", async () => {
@@ -183,6 +208,7 @@ describe("HerdrAdapter", () => {
     const firstSub = serverState.subscriptionCalls[0].subscriptions as Array<{ type: string; pane_id?: string }>;
     expect(firstSub).toContainEqual({ type: "pane.created" });
     expect(firstSub).toContainEqual({ type: "pane.closed" });
+    expect(firstSub).toContainEqual({ type: "pane.updated" });
     expect(firstSub).toContainEqual({ type: "pane.agent_status_changed", pane_id: "w1:p1" });
 
     // Now enable the snapshot expansion (after the initial call)
@@ -240,12 +266,16 @@ describe("HerdrAdapter", () => {
     unsubscribe();
   });
 
-  test("onSessionChange ignores pane_updated events (no feedback loop)", async () => {
+  test("onSessionChange routes output events without refreshing the session list", async () => {
     const client = new HerdrSocketClient(SOCK_PATH);
     const adapter = new HerdrAdapter(client);
 
     const calls: unknown[] = [];
-    const unsubscribe = await adapter.onSessionChange((sessions) => calls.push(sessions));
+    const outputCalls: Array<{ paneId: string; revision: number | null }> = [];
+    const unsubscribe = await adapter.onSessionChange(
+      (sessions) => calls.push(sessions),
+      (paneId, revision) => outputCalls.push({ paneId, revision }),
+    );
 
     // Verify initial callback
     expect(calls.length).toBe(1);
@@ -254,23 +284,23 @@ describe("HerdrAdapter", () => {
     const subscriptionCountAfterInit = serverState.subscriptionCalls.length;
     expect(subscriptionCountAfterInit).toBe(1);
 
-    // Emit multiple pane_updated events (output/terminal changes)
-    // These should NOT trigger callback fires or new subscriptions
-    await client.request("test.emit_event", { event: "pane_updated" });
-    await new Promise((r) => setTimeout(r, 30));
-    await client.request("test.emit_event", { event: "pane_updated" });
+    await client.request("test.emit_event", {
+      event: "pane_output_changed",
+      data: { pane_id: "w1:p1", revision: 99 },
+    });
     await new Promise((r) => setTimeout(r, 30));
 
     // No new callbacks should have fired, and no new subscriptions should have been opened
     expect(calls.length).toBe(1); // still just the initial call
     expect(serverState.subscriptionCalls.length).toBe(subscriptionCountAfterInit); // still just one
 
-    // Verify that pane.updated is NOT in the subscriptions (should only have pane.created/closed and agent_status_changed)
+    // Output subscriptions do not trigger expensive session snapshot refreshes.
     const sub = serverState.subscriptionCalls[0].subscriptions as Array<{ type: string; pane_id?: string }>;
     expect(sub).toContainEqual({ type: "pane.created" });
     expect(sub).toContainEqual({ type: "pane.closed" });
-    expect(sub).not.toContainEqual({ type: "pane.updated" });
+    expect(sub).toContainEqual({ type: "pane.updated" });
     expect(sub).toContainEqual({ type: "pane.agent_status_changed", pane_id: "w1:p1" });
+    expect(outputCalls).toEqual([{ paneId: "w1:p1", revision: 99 }]);
 
     unsubscribe();
   });

@@ -1,4 +1,4 @@
 {
-  "/Users/hans/Documents/GitHub/wranglr-scratch": "experimental",
-  "/Users/hans/Documents/GitHub/ecovolt-web": "guarded"
+  "/path/to/your/project": "guarded",
+  "/path/to/your/scratch-repo": "experimental"
 }

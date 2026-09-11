@@ -1,5 +1,6 @@
 import { ClientMessageSchema, type ClientMessage, type ServerMessage } from "@wranglr/protocol";
 import type { EventBus } from "./event-bus";
+import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 const PushSubscriptionSchema = z.object({
@@ -19,13 +20,36 @@ export interface WsServerOptions {
   heartbeatIntervalMs?: number;
 }
 
+const AUTH_FAILURE_WINDOW_MS = 60_000;
+const AUTH_FAILURE_LIMIT = 20;
+
+function tokensMatch(candidate: string | null, expected: string): boolean {
+  if (candidate === null) return false;
+  const candidateBuf = Buffer.from(candidate);
+  const expectedBuf = Buffer.from(expected);
+  if (candidateBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(candidateBuf, expectedBuf);
+}
+
 export function startWsServer(options: WsServerOptions): { stop: () => void; port: number } {
   const unsubscribers = new Map<Bun.ServerWebSocket<unknown>, () => void>();
+  const authFailures = new Map<string, { count: number; windowStart: number }>();
   const corsHeaders = {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": "content-type",
   };
+
+  function isRateLimited(ip: string): boolean {
+    const now = Date.now();
+    const entry = authFailures.get(ip);
+    if (!entry || now - entry.windowStart > AUTH_FAILURE_WINDOW_MS) {
+      authFailures.set(ip, { count: 1, windowStart: now });
+      return false;
+    }
+    entry.count += 1;
+    return entry.count > AUTH_FAILURE_LIMIT;
+  }
 
   const server = Bun.serve({
     hostname: options.hostname,
@@ -35,7 +59,11 @@ export function startWsServer(options: WsServerOptions): { stop: () => void; por
       if (req.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: corsHeaders });
       }
-      if (url.searchParams.get("token") !== options.token) {
+      if (!tokensMatch(url.searchParams.get("token"), options.token)) {
+        const ip = srv.requestIP(req)?.address ?? "unknown";
+        if (isRateLimited(ip)) {
+          return new Response("too many attempts", { status: 429, headers: corsHeaders });
+        }
         return new Response("unauthorized", { status: 401, headers: corsHeaders });
       }
 
@@ -91,6 +119,10 @@ export function startWsServer(options: WsServerOptions): { stop: () => void; por
 
   const heartbeat = setInterval(() => {
     for (const ws of unsubscribers.keys()) ws.ping();
+    const now = Date.now();
+    for (const [ip, entry] of authFailures) {
+      if (now - entry.windowStart > AUTH_FAILURE_WINDOW_MS) authFailures.delete(ip);
+    }
   }, options.heartbeatIntervalMs ?? 15_000);
 
   return {

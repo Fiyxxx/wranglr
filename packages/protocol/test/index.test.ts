@@ -9,6 +9,8 @@ import {
   ClientMessageSchema,
   VerificationResultSchema,
   WorktreeStatusSchema,
+  TerminalInputSchema,
+  TerminalOutputSchema,
 } from "../src/index";
 
 describe("protocol schemas", () => {
@@ -65,5 +67,20 @@ describe("protocol schemas", () => {
 
     const response = { type: "approval_response", id: "req-1", decision: "approve" as const };
     expect(ApprovalResponseSchema.parse(response)).toEqual(response);
+
+    const terminalOutput = {
+      type: "terminal_output" as const,
+      paneId: "w1:p1",
+      worktreePath: "/repo/feature-x",
+      mode: "append" as const,
+      data: "tests passed\n",
+      revision: 42,
+      truncated: false,
+    };
+    expect(TerminalOutputSchema.parse(terminalOutput)).toEqual(terminalOutput);
+
+    const terminalInput = { type: "terminal_input" as const, paneId: "w1:p1", keys: ["ctrl+c"] };
+    expect(TerminalInputSchema.parse(terminalInput)).toEqual(terminalInput);
+    expect(ClientMessageSchema.parse(terminalInput)).toEqual(terminalInput);
   });
 });

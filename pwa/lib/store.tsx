@@ -16,12 +16,23 @@ export interface PendingApproval {
   risk: "low" | "medium" | "high";
 }
 
+export interface TerminalPaneState {
+  paneId: string;
+  worktreePath: string;
+  content: string;
+  lastData: string;
+  mode: "snapshot" | "append";
+  revision: number;
+  truncated: boolean;
+}
+
 export interface WranglrState {
   connectionStatus: ConnectionStatus;
   worktrees: WorktreeStatus[];
   hookEvents: Array<Extract<ServerMessage, { type: "hook_event" }>>;
   pendingApprovals: PendingApproval[];
   promptResults: Array<Extract<ServerMessage, { type: "prompt_result" }>>;
+  terminals: Record<string, TerminalPaneState>;
 }
 
 export const initialState: WranglrState = {
@@ -30,6 +41,7 @@ export const initialState: WranglrState = {
   hookEvents: [],
   pendingApprovals: [],
   promptResults: [],
+  terminals: {},
 };
 
 export type WranglrAction =
@@ -42,8 +54,15 @@ export function reducer(state: WranglrState, action: WranglrAction): WranglrStat
   switch (action.type) {
     case "connection_status":
       return { ...state, connectionStatus: action.status };
-    case "worktree_status":
-      return { ...state, worktrees: action.worktrees };
+    case "worktree_status": {
+      const livePaneIds = new Set(
+        action.worktrees.map((worktree) => worktree.herdrPaneId).filter((id): id is string => id !== null),
+      );
+      const terminals = Object.fromEntries(
+        Object.entries(state.terminals).filter(([paneId]) => livePaneIds.has(paneId)),
+      );
+      return { ...state, worktrees: action.worktrees, terminals };
+    }
     case "hook_event":
       return { ...state, hookEvents: [...state.hookEvents, action].slice(-HOOK_EVENT_LOG_LIMIT) };
     case "approval_request":
@@ -58,6 +77,27 @@ export function reducer(state: WranglrState, action: WranglrAction): WranglrStat
       return { ...state, pendingApprovals: state.pendingApprovals.filter((a) => a.id !== action.id) };
     case "prompt_result":
       return { ...state, promptResults: [...state.promptResults, action].slice(-20) };
+    case "terminal_output": {
+      const previous = state.terminals[action.paneId];
+      const content = action.mode === "append" && previous
+        ? previous.content + action.data
+        : action.data;
+      return {
+        ...state,
+        terminals: {
+          ...state.terminals,
+          [action.paneId]: {
+            paneId: action.paneId,
+            worktreePath: action.worktreePath,
+            content,
+            lastData: action.data,
+            mode: action.mode,
+            revision: action.revision,
+            truncated: action.truncated,
+          },
+        },
+      };
+    }
     case "verification_result":
       return state;
     default:

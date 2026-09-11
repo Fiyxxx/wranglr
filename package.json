@@ -1,6 +1,7 @@
 {
   "name": "wranglr",
   "private": true,
+  "license": "MIT",
   "workspaces": ["daemon", "packages/*", "pwa"],
   "scripts": {
     "start": "bun scripts/start.ts",

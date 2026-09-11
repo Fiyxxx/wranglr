@@ -63,6 +63,23 @@ export const PromptResultSchema = z.object({
   error: z.string().nullable(),
 });
 
+export const TerminalOutputSchema = z.object({
+  type: z.literal("terminal_output"),
+  paneId: z.string(),
+  worktreePath: z.string(),
+  mode: z.enum(["snapshot", "append"]),
+  data: z.string(),
+  revision: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+
+export const TerminalInputSchema = z.object({
+  type: z.literal("terminal_input"),
+  paneId: z.string(),
+  text: z.string().optional(),
+  keys: z.array(z.string()).optional(),
+});
+
 export const ServerMessageSchema = z.discriminatedUnion("type", [
   WorktreeStatusSchema,
   HookEventSchema,
@@ -70,11 +87,13 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
   ApprovalResolvedSchema,
   VerificationResultSchema,
   PromptResultSchema,
+  TerminalOutputSchema,
 ]);
 
 export const ClientMessageSchema = z.discriminatedUnion("type", [
   ApprovalResponseSchema,
   PromptSchema,
+  TerminalInputSchema,
 ]);
 
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;

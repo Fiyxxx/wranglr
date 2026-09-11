@@ -6,7 +6,7 @@ import { WranglrContext } from "../lib/store";
 import type { WranglrState } from "../lib/store";
 
 function renderWithStatus(status: WranglrState["connectionStatus"]) {
-  const state: WranglrState = { connectionStatus: status, worktrees: [], hookEvents: [], pendingApprovals: [], promptResults: [] };
+  const state: WranglrState = { connectionStatus: status, worktrees: [], hookEvents: [], pendingApprovals: [], promptResults: [], terminals: {} };
   render(
     <WranglrContext.Provider value={{ state, send: () => {} }}>
       <ConnectionBadge />

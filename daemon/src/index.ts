@@ -41,6 +41,10 @@ const pushManager = new PushManager(
 );
 
 let latestSessions: HerdrSession[] = [];
+const terminalSnapshots = new Map<
+  string,
+  Extract<ServerMessage, { type: "terminal_output" }>
+>();
 
 function sessionsToWorktreeStatus(sessions: HerdrSession[]): ServerMessage {
   return {
@@ -55,16 +59,84 @@ function sessionsToWorktreeStatus(sessions: HerdrSession[]): ServerMessage {
 
 const herdrClient = new HerdrSocketClient(HERDR_SOCKET_PATH);
 const herdrAdapter = new HerdrAdapter(herdrClient);
+
+async function refreshPane(paneId: string): Promise<void> {
+  const session = latestSessions.find((candidate) => candidate.paneId === paneId);
+  if (!session) return;
+
+  try {
+    const next = await herdrAdapter.getPaneSnapshot(paneId);
+    const previous = terminalSnapshots.get(paneId);
+    if (previous && next.revision < previous.revision) return;
+    if (previous?.revision === next.revision && previous.data === next.text) return;
+
+    const canAppend = Boolean(
+      previous &&
+      next.text.length >= previous.data.length &&
+      next.text.startsWith(previous.data),
+    );
+    const outgoing = {
+      type: "terminal_output",
+      paneId,
+      worktreePath: session.cwd,
+      mode: canAppend ? "append" : "snapshot",
+      data: canAppend ? next.text.slice(previous!.data.length) : next.text,
+      revision: next.revision,
+      truncated: next.truncated,
+    } satisfies Extract<ServerMessage, { type: "terminal_output" }>;
+
+    terminalSnapshots.set(paneId, { ...outgoing, mode: "snapshot", data: next.text });
+    bus.publish(outgoing);
+  } catch (error) {
+    console.error(`Failed to read Herdr pane ${paneId}`, error);
+  }
+}
+
+const outputRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function schedulePaneRefresh(paneId: string): void {
+  const existing = outputRefreshTimers.get(paneId);
+  if (existing) clearTimeout(existing);
+  outputRefreshTimers.set(
+    paneId,
+    setTimeout(() => {
+      outputRefreshTimers.delete(paneId);
+      void refreshPane(paneId);
+    }, 32),
+  );
+}
+
 await herdrAdapter.onSessionChange((sessions) => {
   latestSessions = sessions;
+  const livePaneIds = new Set(sessions.map((session) => session.paneId));
+  for (const paneId of terminalSnapshots.keys()) {
+    if (!livePaneIds.has(paneId)) terminalSnapshots.delete(paneId);
+  }
   bus.publish(sessionsToWorktreeStatus(sessions));
-});
+  for (const session of sessions) void refreshPane(session.paneId);
+}, (paneId) => schedulePaneRefresh(paneId));
+
+await Promise.all(latestSessions.map((session) => refreshPane(session.paneId)));
 
 const approvalRegistry = new ApprovalRegistry();
 const pendingApprovalMessages = new Map<string, Extract<ServerMessage, { type: "approval_request" }>>();
+const terminalInputChains = new Map<string, Promise<void>>();
 
 async function onClientMessage(msg: ClientMessage): Promise<void> {
-  if (msg.type === "prompt") {
+  if (msg.type === "terminal_input") {
+    const session = latestSessions.find((candidate) => candidate.paneId === msg.paneId);
+    if (!session) return;
+    const previous = terminalInputChains.get(session.paneId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => herdrAdapter.sendInput(session.paneId, { text: msg.text, keys: msg.keys }));
+    terminalInputChains.set(session.paneId, next);
+    try {
+      await next;
+    } finally {
+      if (terminalInputChains.get(session.paneId) === next) terminalInputChains.delete(session.paneId);
+    }
+  } else if (msg.type === "prompt") {
     const session = latestSessions.find((s) => s.cwd === msg.worktreePath);
     if (!session) {
       bus.publish({
@@ -150,11 +222,19 @@ startWsServer({
   port: WS_PORT,
   bus,
   onClientMessage,
-  getSnapshot: () => [sessionsToWorktreeStatus(latestSessions), ...pendingApprovalMessages.values()],
+  getSnapshot: () => [
+    sessionsToWorktreeStatus(latestSessions),
+    ...terminalSnapshots.values(),
+    ...pendingApprovalMessages.values(),
+  ],
   onPushSubscribe: (sub) => pushManager.addSubscription(sub),
   vapidPublicKey: pushManager.vapidPublicKey,
 });
 
 console.log(`wranglr daemon listening: ws=${BIND_HOSTNAME}:${WS_PORT} hooks=127.0.0.1:${HOOK_PORT}`);
-console.log("Scan to pair the Wranglr PWA:");
+console.log("Scan to pair the Wranglr PWA (camera scanning needs HTTPS; on plain http, pair manually with the details below):");
 qrcode.generate(buildPairingPayload(PUBLIC_HOSTNAME, PUBLIC_PORT, TOKEN, PUBLIC_SECURE), { small: true });
+console.log(`  Hostname: ${PUBLIC_HOSTNAME}`);
+console.log(`  Port:     ${PUBLIC_PORT}`);
+console.log(`  Token:    ${TOKEN}`);
+console.log(`  Secure:   ${PUBLIC_SECURE}`);

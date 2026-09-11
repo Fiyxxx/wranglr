@@ -16,6 +16,25 @@ describe("reducer", () => {
     expect(next.worktrees).toEqual([{ path: "/repo/a", herdrPaneId: "p1", state: "working" }]);
   });
 
+  test("worktree_status drops terminals for panes no longer present", () => {
+    const withTerminal = reducer(initialState, {
+      type: "terminal_output",
+      paneId: "p1",
+      worktreePath: "/repo/a",
+      mode: "snapshot",
+      data: "hello",
+      revision: 1,
+      truncated: false,
+    });
+    expect(withTerminal.terminals["p1"]).toBeDefined();
+
+    const next = reducer(withTerminal, {
+      type: "worktree_status",
+      worktrees: [{ path: "/repo/b", herdrPaneId: "p2", state: "working" }],
+    });
+    expect(next.terminals["p1"]).toBeUndefined();
+  });
+
   test("hook_event appends to the hookEvents log", () => {
     const event = { type: "hook_event" as const, hook: "PreToolUse" as const, worktreePath: "/repo/a", tool: "Bash", input: {}, output: null };
     const next = reducer(initialState, event);
@@ -52,5 +71,28 @@ describe("reducer", () => {
   test("prompt_result records delivery feedback", () => {
     const result = { type: "prompt_result" as const, id: "p1", worktreePath: "/repo/a", accepted: true, error: null };
     expect(reducer(initialState, result).promptResults).toEqual([result]);
+  });
+
+  test("terminal_output preserves a full pane and appends incremental output", () => {
+    const snapshot = reducer(initialState, {
+      type: "terminal_output",
+      paneId: "p1",
+      worktreePath: "/repo/a",
+      mode: "snapshot",
+      data: "hello",
+      revision: 1,
+      truncated: false,
+    });
+    const appended = reducer(snapshot, {
+      type: "terminal_output",
+      paneId: "p1",
+      worktreePath: "/repo/a",
+      mode: "append",
+      data: " world",
+      revision: 2,
+      truncated: false,
+    });
+    expect(appended.terminals.p1?.content).toBe("hello world");
+    expect(appended.terminals.p1?.lastData).toBe(" world");
   });
 });

@@ -23,12 +23,13 @@ describe("DashboardPage", () => {
       hookEvents: [],
       pendingApprovals: [],
       promptResults: [],
+      terminals: {},
     });
 
     expect(screen.getByText("/repo/feature-x")).toBeTruthy();
-    expect(screen.getByText("working")).toBeTruthy();
     expect(screen.getByText("/repo/feature-y")).toBeTruthy();
-    expect(screen.getByText("idle")).toBeTruthy();
+    expect(document.querySelector(".session-dot.status-working")).toBeTruthy();
+    expect(document.querySelector(".session-dot.status-idle")).toBeTruthy();
   });
 
   test("links each worktree to its detail page keyed by encoded path", () => {
@@ -38,6 +39,7 @@ describe("DashboardPage", () => {
       hookEvents: [],
       pendingApprovals: [],
       promptResults: [],
+      terminals: {},
     });
 
     const link = screen.getByRole("link", { name: /feature-x/ });
@@ -51,6 +53,7 @@ describe("DashboardPage", () => {
       hookEvents: [],
       pendingApprovals: [{ id: "1", worktreePath: "/repo/feature-x", tool: "Bash", input: {}, risk: "high" }],
       promptResults: [],
+      terminals: {},
     });
 
     expect(screen.getByText("1 pending")).toBeTruthy();
