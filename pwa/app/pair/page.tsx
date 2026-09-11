@@ -44,15 +44,15 @@ export default function PairPage() {
   return (
     <main className="page narrow-page">
       <header className="hero compact-hero">
-        <p className="eyebrow">Same-network connection</p>
+        <p className="eyebrow">Private tailnet connection</p>
         <h1>Pair your phone</h1>
-        <p>Use the connection details printed when the Wranglr daemon starts. Your phone must be on the same Wi-Fi network as your computer.</p>
+        <p>Use the connection details printed when the Wranglr daemon starts.</p>
       </header>
       <form className="card form-stack" onSubmit={handleSubmit}>
         {error && <p role="alert">{error}</p>}
 
         <label htmlFor="hostname">Hostname</label>
-        <input id="hostname" autoCapitalize="none" autoCorrect="off" placeholder="192.168.1.42" value={hostname} onChange={(e) => setHostname(e.target.value)} />
+        <input id="hostname" autoCapitalize="none" autoCorrect="off" placeholder="machine.tailnet.ts.net" value={hostname} onChange={(e) => setHostname(e.target.value)} />
 
         <label htmlFor="port">Port</label>
         <input id="port" inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} />

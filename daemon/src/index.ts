@@ -232,7 +232,7 @@ startWsServer({
 });
 
 console.log(`wranglr daemon listening: ws=${BIND_HOSTNAME}:${WS_PORT} hooks=127.0.0.1:${HOOK_PORT}`);
-console.log("Scan to pair the Wranglr PWA (camera scanning needs HTTPS; on plain http, pair manually with the details below):");
+console.log("Scan to pair the Wranglr PWA (or use the details below if camera scanning isn't available):");
 qrcode.generate(buildPairingPayload(PUBLIC_HOSTNAME, PUBLIC_PORT, TOKEN, PUBLIC_SECURE), { small: true });
 console.log(`  Hostname: ${PUBLIC_HOSTNAME}`);
 console.log(`  Port:     ${PUBLIC_PORT}`);

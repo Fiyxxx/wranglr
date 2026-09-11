@@ -2,8 +2,7 @@
 
 Wranglr puts your real Herdr terminal in a desktop- and phone-friendly PWA. A
 small Bun daemon mirrors ANSI pane output, forwards raw keyboard input to the
-same pane, observes session state, and carries approvals to any device on your
-local network — no VPN or extra app required.
+same pane, observes session state, and carries approvals over your tailnet.
 
 > **Project status:** early alpha. Wranglr is a single-user personal tool, not a
 > hardened remote-access product. The session, approval, prompt, pairing, and
@@ -29,7 +28,7 @@ Phone or browser                         Development machine
 ┌──────────────────────┐                 ┌────────────────────────────┐
 │ Next.js static PWA   │   WebSocket    │ Bun daemon                 │
 │                      │◄───────────────►│                            │
-│ • ANSI terminal      │   Local Wi-Fi  │ • Herdr socket adapter     │
+│ • ANSI terminal      │   Tailscale    │ • Herdr socket adapter     │
 │ • approvals          │                 │ • Claude Code hook server  │
 │ • prompts            │                 │ • worktree policy engine   │
 │ • notifications      │                 │ • Web Push sender          │
@@ -42,18 +41,24 @@ Phone or browser                         Development machine
 
 The daemon talks directly to Herdr's Unix socket at
 `~/.config/herdr/herdr.sock`. Claude Code hooks reach a separate HTTP listener
-bound to `127.0.0.1`, while the authenticated WebSocket listener binds to all
-interfaces (`0.0.0.0`) so any device on the same local network can reach it.
-There's no NAT traversal or public relay — your phone must be on the same
-Wi-Fi as the development machine. See [SECURITY.md](./SECURITY.md) for the
-full trust model.
+bound to `127.0.0.1`, while the authenticated WebSocket listener is reached
+through Tailscale Serve, which terminates TLS and proxies to the daemon's
+loopback port. This gives you a stable HTTPS URL reachable from anywhere your
+tailnet reaches, not just the same Wi-Fi network. See
+[SECURITY.md](./SECURITY.md) for the full trust model.
+
+Prefer not to install Tailscale? Run with `WRANGLR_SKIP_TAILSCALE=true` for a
+plain local-network mode — the launcher auto-detects this machine's LAN IP and
+binds directly to it instead. Same Wi-Fi only, plain http by default (see
+"Local-network mode" below).
 
 ## Prerequisites
 
 - [Bun](https://bun.sh/) 1.x
 - Herdr running with its socket API available
 - Claude Code for hook integration
-- A phone and development machine on the same local network
+- Tailscale on the development machine and phone, with its CLI available for
+  Tailscale Serve (or run local-network-only mode — see below)
 - A modern browser with service worker support
 
 ## Quick start
@@ -65,29 +70,39 @@ bun run start
 ```
 
 That one command installs dependencies, builds the production PWA, creates a
-persistent pairing token and safe default policy, auto-detects this machine's
-LAN IP address, and starts the PWA and daemon. It prints the phone URL, a QR
-code, and the same pairing details as plain text. Press `Ctrl+C` to stop both
-local processes.
+persistent pairing token and safe default policy, configures both Tailscale
+Serve endpoints, and starts the PWA and daemon. It prints the phone URL and a QR
+code. Press `Ctrl+C` to stop both local processes.
 
-Start Herdr on the development machine before running the command. On the
-phone, join the same Wi-Fi network and open the printed URL directly, or open
-the PWA and pair it:
+The two private Serve mappings remain registered with Tailscale and are reused
+the next time you start Wranglr.
 
-- **Manual entry** (works everywhere, including plain http): go to `/pair`,
-  and enter the hostname, port, and token printed in the terminal.
-- **QR scan**: go to `/pair/scan`. This needs a secure context (HTTPS), which
-  local Wi-Fi mode doesn't provide by default — see
-  [SECURITY.md](./SECURITY.md) if you want to put a TLS reverse proxy in
-  front and enable it.
-
-The dashboard should show **Connected** and list active Herdr agents; opening
-a worktree lets you send coding prompts. Install the PWA to the phone's home
-screen before enabling push notifications (push also needs a secure context —
-see SECURITY.md).
+Start Herdr and connect Tailscale on the development machine before running the
+command. On the phone, connect the same tailnet, open the printed HTTPS URL, and
+scan the terminal QR (or use the printed hostname/port/token to pair manually
+at `/pair`). The dashboard should show **Connected** and list active Herdr
+agents; opening a worktree lets you send coding prompts. Install the PWA to the
+phone's home screen before enabling push notifications.
 
 Wranglr stores its generated token and policy in `~/.config/wranglr/`, so the
 same phone pairing continues to work on later runs.
+
+### Local-network mode (no Tailscale)
+
+To run without Tailscale, for local browser testing or if you'd rather not
+install it:
+
+```bash
+WRANGLR_SKIP_TAILSCALE=true bun run start
+```
+
+The launcher auto-detects this machine's LAN IPv4 address, binds the daemon
+and PWA server to all interfaces, and prints that address as the phone URL.
+Your phone must be on the same Wi-Fi network — there's no NAT traversal or
+relay in this mode. It's also plain http by default, so camera-based QR
+scanning and Web Push won't work (both need a secure context) — pair manually
+at `/pair` instead, or put your own TLS-terminating reverse proxy in front and
+set `WRANGLR_SECURE=true`.
 
 ### Approval policy
 
@@ -157,18 +172,19 @@ environment.
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `WRANGLR_TOKEN` | No | Generated and persisted | Override the shared pairing token |
-| `WRANGLR_BIND_HOST` | No | `WRANGLR_HOSTNAME` or `0.0.0.0` | Local daemon bind address |
-| `WRANGLR_PUBLIC_HOST` | No | Auto-detected LAN IPv4 | Override the hostname placed in the pairing payload |
-| `WRANGLR_PUBLIC_PORT` | No | Same as `WRANGLR_WS_PORT` | Public daemon port placed in the pairing payload |
-| `WRANGLR_SECURE` | No | `false` | Set `true` only if you've put a TLS proxy in front |
+| `WRANGLR_BIND_HOST` | No | `WRANGLR_HOSTNAME`, else `127.0.0.1` (Tailscale) or `0.0.0.0` (skip mode) | Local daemon bind address |
+| `WRANGLR_PUBLIC_HOST` | No | Tailscale MagicDNS name, or auto-detected LAN IPv4 in skip mode | Override the hostname placed in the pairing payload |
+| `WRANGLR_PUBLIC_PORT` | No | `8443` (Tailscale), or `WRANGLR_WS_PORT` (skip mode) | Public daemon port placed in the pairing payload |
+| `WRANGLR_SECURE` | No | `true` with Tailscale, `false` in skip mode | Use HTTPS/WSS in local-only mode |
 | `WRANGLR_HOSTNAME` | No | `127.0.0.1` | Backward-compatible combined bind/public hostname |
 | `WRANGLR_WS_PORT` | No | `7420` | WebSocket and push HTTP port |
 | `WRANGLR_HOOK_PORT` | No | `7421` | Loopback Claude Code hook port |
 | `WRANGLR_POLICY_PATH` | No | `~/.config/wranglr/policy.json` | Worktree policy JSON path |
 | `WRANGLR_HERDR_SOCKET_PATH` | No | `~/.config/herdr/herdr.sock` | Herdr socket path |
 | `WRANGLR_VAPID_SUBJECT` | No | `mailto:wranglr@example.com` | Web Push VAPID contact URI |
-| `WRANGLR_PWA_HOST` | No | `0.0.0.0` | Static PWA server bind address |
+| `WRANGLR_PWA_HOST` | No | `127.0.0.1` (Tailscale) or `0.0.0.0` (skip mode) | Static PWA server bind address |
 | `WRANGLR_PWA_PORT` | No | `3000` | Static PWA server port |
+| `WRANGLR_SKIP_TAILSCALE` | No | `false` | Skip Tailscale Serve setup, use local-network mode instead |
 
 ## Development
 
@@ -222,5 +238,5 @@ public internet, and treat the pairing token like an SSH key.
 
 Wranglr is a single-user remote view of existing Herdr panes. Herdr remains the
 PTY and scrollback source of truth; Wranglr does not create a parallel SSH shell.
-Multi-user collaboration, cloud relays, and custom NAT traversal are outside the
-current scope.
+Multi-user collaboration, cloud relays, and custom NAT traversal (beyond what
+Tailscale already provides) are outside the current scope.
