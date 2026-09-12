@@ -68,15 +68,23 @@ bun run start
 
 That one command installs dependencies, builds the production PWA, creates a
 persistent pairing token and safe default policy, sets up networking (default:
-Tailscale Serve), and starts the PWA and daemon. It prints the phone URL and a
-QR code. Press `Ctrl+C` to stop both local processes.
+Tailscale Serve), and starts the PWA and daemon. It prints two QR codes.
+Press `Ctrl+C` to stop both local processes.
 
 Start Herdr on the development machine before running the command. On the
-phone, open the printed URL and scan the terminal QR (or use the printed
-hostname/port/token to pair manually at `/pair`). The dashboard should show
-**Connected** and list active Herdr agents; opening a worktree lets you send
-coding prompts. Install the PWA to the phone's home screen before enabling
-push notifications.
+phone:
+
+1. Scan **QR #1** with your phone's regular camera app — it's just the Phone
+   URL, so it opens the Wranglr PWA in your browser like any other link.
+2. Inside the app, go to `/pair/scan` and scan **QR #2** (the one the daemon
+   prints, further down) — that one carries the actual pairing data
+   (hostname/port/token) and only makes sense scanned from inside the app, not
+   with a regular camera app. Or skip scanning it and pair manually at `/pair`
+   using the printed hostname/port/token instead.
+
+The dashboard should show **Connected** and list active Herdr agents; opening
+a worktree lets you send coding prompts. Install the PWA to the phone's home
+screen before enabling push notifications.
 
 Wranglr stores its generated token and policy in `~/.config/wranglr/`, so the
 same phone pairing continues to work on later runs.

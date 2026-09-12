@@ -112,7 +112,7 @@ export function TerminalWorkspace({ initialWorktreePath }: { initialWorktreePath
                   className="session-item"
                   data-selected={selected}
                   href={`/worktree?path=${encodeURIComponent(worktree.path)}`}
-                  key={worktree.path}
+                  key={worktree.herdrPaneId ?? worktree.path}
                   onClick={(event) => selectSession(event, worktree.herdrPaneId)}
                 >
                   <span className={`session-dot status-${worktree.state}`} />

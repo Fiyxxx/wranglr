@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir, networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import qrcode from "qrcode-terminal";
 
 const repoRoot = join(import.meta.dir, "..");
 const configDir = join(homedir(), ".config", "wranglr");
@@ -284,6 +285,8 @@ async function main(): Promise<void> {
 
   console.log(`\nPhone URL: ${phoneUrl}`);
   if (tunnelMode === "none") console.log("Make sure your phone is on the same Wi-Fi network as this machine.");
+  console.log("Scan with your phone's camera to open the Wranglr PWA (QR #1 of 2 — the daemon prints a second QR below for pairing):");
+  qrcode.generate(phoneUrl, { small: true });
   console.log(`Policy: ${policyPath}`);
   console.log("Starting the PWA and daemon. Press Ctrl+C to stop both.\n");
 

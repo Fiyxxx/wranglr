@@ -46,6 +46,22 @@ describe("DashboardPage", () => {
     expect(link.getAttribute("href")).toBe(`/worktree?path=${encodeURIComponent("/repo/feature-x")}`);
   });
 
+  test("lists every pane even when multiple panes share the same worktree path", () => {
+    renderWithState({
+      connectionStatus: "open",
+      worktrees: [
+        { path: "/repo/shared", herdrPaneId: "p1", state: "working" },
+        { path: "/repo/shared", herdrPaneId: "p2", state: "idle" },
+      ],
+      hookEvents: [],
+      pendingApprovals: [],
+      promptResults: [],
+      terminals: {},
+    });
+
+    expect(document.querySelectorAll(".session-item")).toHaveLength(2);
+  });
+
   test("shows a pending-approval count badge when approvals are waiting", () => {
     renderWithState({
       connectionStatus: "open",
