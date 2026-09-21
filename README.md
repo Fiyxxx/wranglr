@@ -1,3 +1,5 @@
+![Wranglr — your terminal, anywhere](assets/wranglr-banner.png)
+
 # Wranglr
 
 Wranglr puts your real Herdr terminal in a desktop- and phone-friendly PWA. A
